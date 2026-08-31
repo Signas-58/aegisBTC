@@ -2,7 +2,7 @@
   <img src="assets/logo.jpg" alt="Aegis-BTC Logo" width="220" />
 </p>
 
-# Aegis-BTC: Bitcoin Multipliers Trading Engine
+# Aegis-BTC: Bitcoin Multipliers Trading Engine (DERIVED FROM AEGIS-10)
 
 ![Aegis-BTC](https://img.shields.io/badge/Aegis--BTC-Deriv%20Crypto%20Multipliers-orange.svg)
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue.svg)
@@ -114,4 +114,4 @@ python -m unittest tests/test_aegis_btc.py -v
 
 ## 📜 License
 
-Distributed under the MIT License. See `LICENSE` for details.
+Distributed under the no License. See `LICENSE` for details.
