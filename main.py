@@ -267,11 +267,14 @@ async def run_live_bot():
 
 def spawn_terminal_window():
     """
-    Launch live bot in a separate, visible Command Prompt window on Windows.
+    Launch live bot in a separate, visible PowerShell window on Windows desktop.
     """
     import subprocess
-    cmd = f'start "AEGIS-BTC LIVE TRADING TERMINAL" cmd /k "cd /d "{os.getcwd()}" && python main.py --live"'
-    logger.info("Opening visible command prompt window for Aegis-BTC...")
+    cmd = (
+        'powershell -Command "Start-Process powershell '
+        '-ArgumentList \'-NoExit\', \'-Command\', \'cd \\"c:\\Workspace\\aegisBTC\\"; python main.py --live\'"'
+    )
+    logger.info("Opening visible command window on desktop for Aegis-BTC...")
     subprocess.Popen(cmd, shell=True)
 
 
