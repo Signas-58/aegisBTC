@@ -292,7 +292,7 @@ def spawn_terminal_window():
     import subprocess
     cmd = (
         'powershell -Command "Start-Process powershell '
-        '-ArgumentList \'-NoExit\', \'-Command\', \'cd \\"c:\\Workspace\\aegisBTC\\"; python main.py --live\'"'
+        '-ArgumentList \'-NoExit\', \'-Command\', \'cd \\"c:\\Workspace\\aegisBTC\\"; python main.py --live --child\'"'
     )
     logger.info("Opening visible command window on desktop for Aegis-BTC...")
     subprocess.Popen(cmd, shell=True)
@@ -304,8 +304,15 @@ def main():
     parser.add_argument("--test", action="store_true", help="Run dry-run simulation mode")
     parser.add_argument("--live", action="store_true", help="Run live trading bot mode")
     parser.add_argument("--open-terminal", action="store_true", help="Pop up a visible window and run live bot")
+    parser.add_argument("--child", action="store_true", help="Internal flag indicating execution inside spawned window")
 
     args = parser.parse_args()
+
+    # Automatically force visible desktop terminal window whenever --live is invoked
+    if args.live and not args.child:
+        logger.info("Auto-spawning standalone visible desktop terminal for Aegis-BTC...")
+        spawn_terminal_window()
+        sys.exit(0)
 
     if args.open_terminal:
         spawn_terminal_window()
