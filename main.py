@@ -220,7 +220,7 @@ async def run_live_bot():
 
     try:
         while True:
-            await asyncio.sleep(5)
+            await asyncio.sleep(3)
             tick_counter += 1
             
             if not client.is_connected:
@@ -228,6 +228,10 @@ async def run_live_bot():
                 await client.connect()
                 await client.subscribe_mtf_candles(config.SYMBOL)
                 continue
+
+            # Fetch latest fresh candle data from Deriv API
+            await client.subscribe_mtf_candles(config.SYMBOL)
+            await asyncio.sleep(0.5)
 
             # Run Strategy Analysis on Live Ingested Candles
             analysis = analyze_market_and_generate_signal(

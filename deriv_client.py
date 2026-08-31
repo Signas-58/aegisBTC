@@ -119,7 +119,7 @@ class DerivWSClient:
                 "req_id": self._get_next_req_id()
             }
             await self.send_json(req)
-            logger.info(f"Ingested {symbol} {label} candles (granularity: {granularity}s).")
+            logger.debug(f"Ingested {symbol} {label} candles (granularity: {granularity}s).")
 
     async def send_proposal(self, proposal_payload: Dict[str, Any]) -> int:
         req_id = self._get_next_req_id()
