@@ -220,7 +220,13 @@ async def run_live_bot():
 
     try:
         while True:
-            await asyncio.sleep(3)
+            is_active = engine.position_mgr.is_open
+            
+            # Dual-rate frequency model:
+            # - Idle Scanning Mode (no active trade): 25 seconds
+            # - Active Trade / Connected Position Mode: 1 second / high-frequency tick
+            sleep_interval = 1.0 if is_active else 25.0
+            await asyncio.sleep(sleep_interval)
             tick_counter += 1
             
             if not client.is_connected:
@@ -231,7 +237,7 @@ async def run_live_bot():
 
             # Fetch latest fresh candle data from Deriv API
             await client.subscribe_mtf_candles(config.SYMBOL)
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.3)
 
             # Run Strategy Analysis on Live Ingested Candles
             analysis = analyze_market_and_generate_signal(
@@ -245,15 +251,25 @@ async def run_live_bot():
             regime = analysis.get("regime", "REGIME_CONSOLIDATING")
             signal = analysis.get("signal", "NO_SIGNAL")
 
-            # Periodic Heartbeat Monitor every 10s so user sees continuous live candle ticks
-            if tick_counter % 2 == 0:
+            if is_active:
+                pos_id = engine.position_mgr.active_contract_id
+                pos_type = engine.position_mgr.direction
+                entry_price = engine.position_mgr.entry_price
+                peak_pnl = engine.position_mgr.peak_pnl
+                sl_floor = engine.position_mgr.current_sl_floor
                 logger.info(
-                    f"[MARKET TICK] {config.SYMBOL}: ${current_price:.2f} | "
+                    f"[ACTIVE TRADE TICK 1s] ID: {pos_id} | Type: {pos_type} | "
+                    f"Entry: ${entry_price:.2f} | Current: ${current_price:.2f} | "
+                    f"Peak PnL: ${peak_pnl:.2f} | SL Floor: ${sl_floor:.2f}"
+                )
+            else:
+                logger.info(
+                    f"[SCANNING TICK 25s] {config.SYMBOL}: ${current_price:.2f} | "
                     f"Regime: {regime} | Setup Score: {confidence_score}% | "
-                    f"Signal: {signal} | Status: Scanning..."
+                    f"Signal: {signal} | Status: Idle Scanning..."
                 )
 
-            if signal != "NO_SIGNAL":
+            if signal != "NO_SIGNAL" and not is_active:
                 allowed, reason = engine.is_execution_allowed()
                 if allowed:
                     logger.info(f"🔥 [SIGNAL TRIGGERED] {signal} | Score: {confidence_score}% | Price: ${current_price:.2f}")
