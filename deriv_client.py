@@ -100,8 +100,8 @@ class DerivWSClient:
             self.is_connected = True
             logger.info("Deriv WebSocket stream connected successfully.")
 
-            # Send WebSocket authorization if token is provided
-            if self.api_token:
+            # Send WebSocket authorization if token is a classic V3 WS token (not pat_)
+            if self.api_token and not self.api_token.startswith("pat_"):
                 logger.info("Sending WebSocket authorization request...")
                 auth_req = {"authorize": self.api_token, "req_id": self._get_next_req_id()}
                 await self.send_json(auth_req)

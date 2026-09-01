@@ -130,6 +130,7 @@ class AegisExecutionEngine:
             "symbol": config.SYMBOL,
             "multiplier": config.MULTIPLIER_LEVERAGE,
             "limit_order": {"stop_loss": config.HARD_STOP_LOSS_USD},
+            "subscribe": 1
         }
 
     def is_execution_allowed(self) -> Tuple[bool, str]:
