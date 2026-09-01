@@ -85,7 +85,7 @@ class DerivWSClient:
 
     async def connect(self) -> bool:
         """
-        Connect to Deriv WS endpoint and verify REST authorization.
+        Connect to Deriv WS endpoint and authorize with API Token.
         """
         if websockets is None:
             logger.error("`websockets` package is not installed.")
@@ -95,10 +95,17 @@ class DerivWSClient:
         self.check_rest_auth()
 
         try:
-            logger.info(f"Connecting to Deriv Candle Stream: {self.ws_url}...")
+            logger.info(f"Connecting to Deriv WebSocket Stream: {self.ws_url}...")
             self.ws = await websockets.connect(self.ws_url)
             self.is_connected = True
-            logger.info("Deriv WebSocket candle stream connected successfully.")
+            logger.info("Deriv WebSocket stream connected successfully.")
+
+            # Send WebSocket authorization if token is provided
+            if self.api_token:
+                logger.info("Sending WebSocket authorization request...")
+                auth_req = {"authorize": self.api_token, "req_id": self._get_next_req_id()}
+                await self.send_json(auth_req)
+
             return True
         except Exception as e:
             logger.error(f"Failed to connect to Deriv WS: {e}")
@@ -188,7 +195,15 @@ class DerivWSClient:
                         self.sell_error_callback(err_msg)
                     continue
 
-                if msg_type in ("candles", "ohlc"):
+                if msg_type == "authorize":
+                    auth_info = msg.get("authorize", {})
+                    acc_id = auth_info.get("loginid")
+                    bal = auth_info.get("balance")
+                    currency = auth_info.get("currency")
+                    self.is_authorized = True
+                    logger.info(f"🎉 [WS AUTH SUCCESS] Connected Account: {acc_id} | Balance: ${bal} {currency}")
+
+                elif msg_type in ("candles", "ohlc"):
                     self._process_candle_message(msg)
 
                 elif msg_type == "proposal":
