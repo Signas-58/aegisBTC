@@ -175,17 +175,14 @@ class MT5Client:
             logger.error(f"Cannot fetch tick info for {self.symbol}.")
             return None
 
-        order_type = mt5.ORDER_TYPE_BUY if signal_type in ("MULTUP", "BUY", "LONG") else mt5.ORDER_TYPE_SELL
-        price = tick.ask if order_type == mt5.ORDER_TYPE_BUY else tick.bid
-
-        # Calculate price distance for target USD risk:
-        # For 0.01 lot: $0.75 risk = $75.00 price distance on BTCUSD
         price_distance = (stop_loss_usd / self.volume) if self.volume > 0 else 75.0
 
         if order_type == mt5.ORDER_TYPE_BUY:
-            sl = price - price_distance
+            price = tick.ask
+            sl = tick.bid - price_distance
         else:
-            sl = price + price_distance
+            price = tick.bid
+            sl = tick.ask + price_distance
 
         # Determine supported filling mode (Weltrade requires ORDER_FILLING_FOK)
         sym_info = mt5.symbol_info(self.symbol)
