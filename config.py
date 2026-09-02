@@ -8,6 +8,7 @@ except ImportError:
 # API Connection & Symbol Specs
 APP_ID = os.getenv("DERIV_APP_ID", "1089")
 API_TOKEN = os.getenv("DERIV_API_TOKEN", os.getenv("DERIV_TOKEN", ""))
+DERIV_ACCOUNT_ID = os.getenv("DERIV_ACCOUNT_ID", "DOT93113459")
 SYMBOL = os.getenv("DERIV_SYMBOL", "cryBTCUSD")  # Deriv Crypto Multipliers Symbol
 CONTRACT_TYPE_UP = "MULTUP"
 CONTRACT_TYPE_DOWN = "MULTDOWN"

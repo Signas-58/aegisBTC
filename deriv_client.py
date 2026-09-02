@@ -70,15 +70,29 @@ class DerivWSClient:
             with urllib.request.urlopen(req) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 accounts = data.get("data", [])
+                
+                # First pass: Look for exact configured account ID (e.g. DOT93113459)
+                target_acc = None
                 for acc in accounts:
-                    if acc.get("account_type") == "demo" or acc.get("status") == "active":
-                        self.account_info = acc
-                        self.is_authorized = True
-                        logger.info(
-                            f"[REST AUTH SUCCESS] Connected Account: {acc.get('account_id')} | "
-                            f"Type: {acc.get('account_type')} | Balance: ${float(acc.get('balance', 0)):.2f} {acc.get('currency')}"
-                        )
-                        return True
+                    if acc.get("account_id") == config.DERIV_ACCOUNT_ID:
+                        target_acc = acc
+                        break
+                
+                # Second pass: Fallback to demo account if configured account ID not found
+                if not target_acc:
+                    for acc in accounts:
+                        if acc.get("account_type") == "demo":
+                            target_acc = acc
+                            break
+
+                if target_acc:
+                    self.account_info = target_acc
+                    self.is_authorized = True
+                    logger.info(
+                        f"🎉 [REST AUTH SUCCESS] Connected Account: {target_acc.get('account_id')} | "
+                        f"Type: {target_acc.get('account_type')} | Balance: ${float(target_acc.get('balance', 0)):.2f} {target_acc.get('currency')}"
+                    )
+                    return True
         except Exception as e:
             logger.debug(f"REST Auth check notice: {e}")
         return False
