@@ -187,13 +187,14 @@ class MT5Client:
         else:
             sl = price + price_distance
 
-        # Determine supported filling mode (FOK vs IOC)
+        # Determine supported filling mode (Weltrade requires ORDER_FILLING_FOK)
         sym_info = mt5.symbol_info(self.symbol)
         filling_mode = mt5.ORDER_FILLING_FOK
         if sym_info and hasattr(sym_info, 'filling_mode'):
-            if sym_info.filling_mode & mt5.ORDER_FILLING_FOK:
+            # SYMBOL_FILLING_FOK = 1, SYMBOL_FILLING_IOC = 2
+            if sym_info.filling_mode & 1:  # SYMBOL_FILLING_FOK flag
                 filling_mode = mt5.ORDER_FILLING_FOK
-            elif sym_info.filling_mode & mt5.ORDER_FILLING_IOC:
+            elif sym_info.filling_mode & 2:  # SYMBOL_FILLING_IOC flag
                 filling_mode = mt5.ORDER_FILLING_IOC
 
         request = {
@@ -274,13 +275,13 @@ class MT5Client:
         tick = mt5.symbol_info_tick(self.symbol)
         price = tick.bid if order_type == mt5.ORDER_TYPE_SELL else tick.ask
 
-        # Determine supported filling mode (FOK vs IOC)
+        # Determine supported filling mode (Weltrade requires ORDER_FILLING_FOK)
         sym_info = mt5.symbol_info(self.symbol)
         filling_mode = mt5.ORDER_FILLING_FOK
         if sym_info and hasattr(sym_info, 'filling_mode'):
-            if sym_info.filling_mode & mt5.ORDER_FILLING_FOK:
+            if sym_info.filling_mode & 1:  # SYMBOL_FILLING_FOK flag
                 filling_mode = mt5.ORDER_FILLING_FOK
-            elif sym_info.filling_mode & mt5.ORDER_FILLING_IOC:
+            elif sym_info.filling_mode & 2:  # SYMBOL_FILLING_IOC flag
                 filling_mode = mt5.ORDER_FILLING_IOC
 
         request = {
