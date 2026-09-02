@@ -178,18 +178,23 @@ class MT5Client:
         order_type = mt5.ORDER_TYPE_BUY if signal_type in ("MULTUP", "BUY", "LONG") else mt5.ORDER_TYPE_SELL
         price = tick.ask if order_type == mt5.ORDER_TYPE_BUY else tick.bid
 
-        # Compute point-based Stop Loss price offset
-        sym_info = mt5.symbol_info(self.symbol)
-        point = sym_info.point if sym_info else 0.01
-
-        # Stop loss calculation in price terms
-        sl_points = (stop_loss_usd / (self.volume * 100.0)) if self.volume > 0 else 50.0
-        sl_offset = max(sl_points, 50.0) * point
+        # Calculate price distance for target USD risk:
+        # For 0.01 lot: $0.75 risk = $75.00 price distance on BTCUSD
+        price_distance = (stop_loss_usd / self.volume) if self.volume > 0 else 75.0
 
         if order_type == mt5.ORDER_TYPE_BUY:
-            sl = price - sl_offset
+            sl = price - price_distance
         else:
-            sl = price + sl_offset
+            sl = price + price_distance
+
+        # Determine supported filling mode (FOK vs IOC)
+        sym_info = mt5.symbol_info(self.symbol)
+        filling_mode = mt5.ORDER_FILLING_FOK
+        if sym_info and hasattr(sym_info, 'filling_mode'):
+            if sym_info.filling_mode & mt5.ORDER_FILLING_FOK:
+                filling_mode = mt5.ORDER_FILLING_FOK
+            elif sym_info.filling_mode & mt5.ORDER_FILLING_IOC:
+                filling_mode = mt5.ORDER_FILLING_IOC
 
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
@@ -202,13 +207,13 @@ class MT5Client:
             "magic": 108920,
             "comment": "Aegis-BTC Engine Trade",
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,
+            "type_filling": filling_mode,
         }
 
         logger.info(f"Sending MT5 Order: {signal_type} {self.volume} lots {self.symbol} @ ${price:.2f} | SL: ${sl:.2f}")
         result = mt5.order_send(request)
 
-        if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
+        if result is None or result.retcode not in (mt5.TRADE_RETCODE_DONE, 10009):
             err = result.comment if result else mt5.last_error()
             logger.error(f"[MT5 ORDER FAILED] Retcode: {result.retcode if result else 'N/A'} | Reason: {err}")
             return None
@@ -269,6 +274,15 @@ class MT5Client:
         tick = mt5.symbol_info_tick(self.symbol)
         price = tick.bid if order_type == mt5.ORDER_TYPE_SELL else tick.ask
 
+        # Determine supported filling mode (FOK vs IOC)
+        sym_info = mt5.symbol_info(self.symbol)
+        filling_mode = mt5.ORDER_FILLING_FOK
+        if sym_info and hasattr(sym_info, 'filling_mode'):
+            if sym_info.filling_mode & mt5.ORDER_FILLING_FOK:
+                filling_mode = mt5.ORDER_FILLING_FOK
+            elif sym_info.filling_mode & mt5.ORDER_FILLING_IOC:
+                filling_mode = mt5.ORDER_FILLING_IOC
+
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": self.symbol,
@@ -280,7 +294,7 @@ class MT5Client:
             "magic": 108920,
             "comment": "Aegis-BTC Close Deal",
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,
+            "type_filling": filling_mode,
         }
 
         logger.info(f"Closing MT5 Position Ticket #{target.ticket} @ ${price:.2f}...")
