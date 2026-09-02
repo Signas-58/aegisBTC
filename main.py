@@ -188,101 +188,101 @@ async def run_dry_run_simulation():
 async def run_live_bot():
     print_banner()
     engine = AegisExecutionEngine()
-    client = DerivWSClient()
+    
+    # Initialize MetaTrader 5 (Weltrade / MT5) Client
+    from mt5_client import MT5Client
+    client = MT5Client()
 
-    if not await client.connect():
-        logger.error("Failed to establish WebSocket connection. Exiting.")
-        return
+    if not client.connect():
+        logger.error("Failed to connect to MetaTrader 5 Terminal. Falling back to Deriv WS Client...")
+        client = DerivWSClient()
+        if not await client.connect():
+            logger.error("Failed to establish any broker connection. Exiting.")
+            return
+        await client.subscribe_mtf_candles(config.SYMBOL)
+        asyncio.create_task(client.listen_loop())
+        is_mt5 = False
+    else:
+        is_mt5 = True
 
-    # Wire Callbacks
-    def handle_poc(poc: Dict[str, Any]):
-        result = engine.handle_poc_update(poc)
-        action = result.get("action")
-        if action == "TRIGGER_MANUAL_SELL":
-            contract_id = result.get("contract_id")
-            asyncio.create_task(client.manual_sell_contract(contract_id))
-
-    def handle_sell_err(err_msg: str):
-        engine.handle_sell_error(err_msg)
-
-    client.poc_callback = handle_poc
-    client.sell_error_callback = handle_sell_err
-
-    # Subscribe to MTF Candle Streams
-    await client.subscribe_mtf_candles(config.SYMBOL)
-
-    # Start WebSocket background listener
-    listener_task = asyncio.create_task(client.listen_loop())
-
-    logger.info("[AEGIS-BTC LIVE SCANNER RUNNING] Monitoring 15m/5m/1m market streams...")
-
-    tick_counter = 0
+    logger.info(f"[AEGIS-BTC LIVE SCANNER RUNNING] Mode: {'MT5 (Weltrade)' if is_mt5 else 'Deriv WS'} | Symbol: {client.symbol}...")
 
     try:
         while True:
-            is_active = engine.position_mgr.is_open
-            
+            # Check for open position status
+            if is_mt5:
+                pos = client.get_open_position()
+                is_active = pos is not None
+            else:
+                is_active = engine.position_mgr.is_open
+
             # Dual-rate frequency model:
-            # - Idle Scanning Mode (no active trade): 25 seconds
-            # - Active Trade / Connected Position Mode: 1 second / high-frequency tick
+            # - Idle Scanning Mode: 25 seconds
+            # - Active Position Tracking Mode: 1 second
             sleep_interval = 1.0 if is_active else 25.0
             await asyncio.sleep(sleep_interval)
-            tick_counter += 1
-            
-            if not client.is_connected:
-                logger.warning("Reconnecting to Deriv WebSocket...")
-                await client.connect()
+
+            if is_mt5:
+                # Fetch fresh MTF candles directly from MT5 memory
+                client.fetch_mtf_candles()
+                candles_15m = client.candles_15m
+                candles_5m = client.candles_5m
+                candles_1m = client.candles_1m
+            else:
                 await client.subscribe_mtf_candles(config.SYMBOL)
-                continue
+                await asyncio.sleep(0.3)
+                candles_15m = client.candles_15m
+                candles_5m = client.candles_5m
+                candles_1m = client.candles_1m
 
-            # Fetch latest fresh candle data from Deriv API
-            await client.subscribe_mtf_candles(config.SYMBOL)
-            await asyncio.sleep(0.3)
+            # Run Strategy Analysis on Ingested Candles
+            analysis = analyze_market_and_generate_signal(candles_15m, candles_5m, candles_1m)
 
-            # Run Strategy Analysis on Live Ingested Candles
-            analysis = analyze_market_and_generate_signal(
-                client.candles_15m,
-                client.candles_5m,
-                client.candles_1m
-            )
-
-            current_price = analysis.get("current_price", 0.0)
+            current_price = analysis.get("current_price") or (client.get_latest_price() if is_mt5 else 0.0)
             confidence_score = analysis.get("confidence_score", 0)
             regime = analysis.get("regime", "REGIME_CONSOLIDATING")
             signal = analysis.get("signal", "NO_SIGNAL")
 
             if is_active:
-                pos_id = engine.position_mgr.active_contract_id
-                pos_type = engine.position_mgr.direction
-                entry_price = engine.position_mgr.entry_price
-                peak_pnl = engine.position_mgr.peak_pnl
-                sl_floor = engine.position_mgr.current_sl_floor
-                logger.info(
-                    f"[ACTIVE TRADE TICK 1s] ID: {pos_id} | Type: {pos_type} | "
-                    f"Entry: ${entry_price:.2f} | Current: ${current_price:.2f} | "
-                    f"Peak PnL: ${peak_pnl:.2f} | SL Floor: ${sl_floor:.2f}"
-                )
+                if is_mt5 and pos:
+                    profit = pos["profit"]
+                    res = engine.handle_poc_update({"profit": profit, "status": "open"})
+                    if res.get("action") == "TRIGGER_MANUAL_SELL":
+                        logger.info(f"[STEP-RATCHET STOP TRIGGERED] Closing MT5 position: {res['reason']}")
+                        client.close_position(pos["ticket"])
+                        engine._record_trade_result(profit)
+                    else:
+                        logger.info(
+                            f"[ACTIVE TRADE TICK 1s] Ticket: #{pos['ticket']} | Type: {pos['type']} | "
+                            f"Entry: ${pos['price_open']:.2f} | Current: ${pos['price_current']:.2f} | "
+                            f"PnL: ${profit:.2f} | SL: ${pos['sl']:.2f}"
+                        )
             else:
                 logger.info(
-                    f"[SCANNING TICK 25s] {config.SYMBOL}: ${current_price:.2f} | "
+                    f"[SCANNING TICK 25s] {client.symbol}: ${current_price:.2f} | "
                     f"Regime: {regime} | Setup Score: {confidence_score}% | "
                     f"Signal: {signal} | Status: Idle Scanning..."
                 )
 
+            # Signal Trigger Check
             if signal != "NO_SIGNAL" and not is_active:
                 allowed, reason = engine.is_execution_allowed()
                 if allowed:
                     logger.info(f"🔥 [SIGNAL TRIGGERED] {signal} | Score: {confidence_score}% | Price: ${current_price:.2f}")
-                    proposal_req = engine.build_proposal_payload(signal)
-                    await client.send_proposal(proposal_req)
+                    if is_mt5:
+                        order_res = client.send_order(signal, config.HARD_STOP_LOSS_USD)
+                        if order_res:
+                            engine.position_mgr.open_position(order_res["ticket"], signal, order_res["price"])
+                    else:
+                        proposal_req = engine.build_proposal_payload(signal)
+                        await client.send_proposal(proposal_req)
                 else:
                     logger.info(f"[EXECUTION BLOCKED] {reason}")
 
     except asyncio.CancelledError:
         logger.info("Aegis-BTC engine shutdown requested.")
     finally:
-        await client.close()
-        listener_task.cancel()
+        client.close()
 
 
 def spawn_terminal_window():

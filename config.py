@@ -14,6 +14,13 @@ CONTRACT_TYPE_UP = "MULTUP"
 CONTRACT_TYPE_DOWN = "MULTDOWN"
 MULTIPLIER_LEVERAGE = int(os.getenv("MULTIPLIER_LEVERAGE", "100"))  # Capped leverage (x100) to protect $20 account from wicks
 
+# MetaTrader 5 (Weltrade / MT5) Config
+MT5_ACCOUNT = int(os.getenv("MT5_ACCOUNT", "0")) if os.getenv("MT5_ACCOUNT", "").isdigit() else 0
+MT5_PASSWORD = os.getenv("MT5_PASSWORD", "")
+MT5_SERVER = os.getenv("MT5_SERVER", "Weltrade-Live")
+MT5_SYMBOL = os.getenv("MT5_SYMBOL", "BTCUSD")
+MT5_VOLUME = float(os.getenv("MT5_VOLUME", "0.01"))
+
 # Multi-Timeframe Ingestion
 TF_MACRO = 900  # 15-Minute Candles (Macro Horizon)
 TF_STRUCTURE = 300  # 5-Minute Candles (Structure & Liquidity Horizon)
