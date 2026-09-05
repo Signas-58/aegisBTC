@@ -7,14 +7,17 @@ Aegis-BTC is an automated algorithmic trading engine built for Deriv Bitcoin Mul
 
 ## 1. System Architecture & Multi-Timeframe (MTF) Pipeline
 
-Aegis-BTC evaluates market conditions top-down across three distinct candle horizons before placing any order:
+Aegis-BTC Hybrid evaluates market conditions top-down across four distinct candle horizons before placing any order:
 
 ```
 [15-Min Macro Stream (granularity: 900)]
 └── Computes 15m EMA-200 Directional Bias & 20-Period Swing Support/Resistance
 │
 [5-Min Structure Stream (granularity: 300)]
-└── Calculates ADX-14 Trend Strength, ATR-14 Volatility & Liquidity Sweeps
+└── Calculates ADX-14 Trend Strength, ATR-14 Volatility & 5m Liquidity Sweeps
+│
+[3-Min Execution Stream (granularity: 180)]
+└── Identifies 3m Fair Value Gap (FVG) Imbalances & Retest Zones
 │
 [1-Min Trigger Stream (granularity: 60)]
 └── Verifies EMA-20 Crossover & RSI-14 Momentum Confluence
@@ -25,28 +28,35 @@ Aegis-BTC evaluates market conditions top-down across three distinct candle hori
 | Timeframe | Function | Primary Technicals |
 | :--- | :--- | :--- |
 | **15-Minute** | Macro Direction & Hard Levels | EMA-200, Swing High (Resistance), Swing Low (Support) |
-| **5-Minute** | Regime, Volatility & Sweeps | ADX-14, ATR-14, Liquidity Sweep Wicks |
+| **5-Minute** | Regime, Volatility & Sweeps | ADX-14, ATR-14, 5m Liquidity Sweep Wicks |
+| **3-Minute** | FVG Imbalance & Displacement | 3m Fair Value Gaps (FVG), 3m ATR Imbalance Ratio |
 | **1-Minute** | Precision Entry Confirmation | EMA-20, RSI-14 |
 
 ---
 
 ## 2. Market Regime & Intelligence Scoring Engine (`intelligence.py`)
 
-Aegis-BTC avoids rigid binary switches by utilizing a **100-Point Probability Matrix**. An entry order is generated **only if the total score is ≥ 75%**.
+Aegis-BTC Hybrid utilizes a **5-Vector 100-Point Confluence Matrix**. An entry order is generated **only if the total score is ≥ 75%**.
+
+### ICT Silver Bullet Session Windows (CAT / UTC+2)
+- **London Silver Bullet:** 09:00 – 10:00 CAT
+- **NY AM Silver Bullet:** 16:00 – 17:00 CAT
+- **NY PM Silver Bullet:** 20:00 – 21:00 CAT
 
 ### Regime Classifier
 * **`REGIME_TRENDING`:** 5m ADX ≥ 20 and 5m ADX slope > 0.
 * **`REGIME_CONSOLIDATING`:** 5m ADX < 20 and ATR ratio ≤ 1.0.
 * **`REGIME_HIGH_RISK`:** 5m ATR ratio > 1.8 (Extreme market volatility). **Execution Rule:** Force `NO_SIGNAL` immediately.
 
-### 100-Point Confluence Scoring Breakdown
+### 100-Point Hybrid Confluence Scoring Breakdown
 
 | Vector | Scoring Criteria | Max Points |
-| :--- | :--- | :--- |
-| **1. Macro Trend** | Price > 15m EMA-200 (`MULTUP`) or Price < 15m EMA-200 (`MULTDOWN`) | **25 Pts** |
-| **2. Regime Quality** | `REGIME_TRENDING` (25 pts) OR `REGIME_CONSOLIDATING` with ADX ≥ 18 (15 pts) | **25 Pts** |
-| **3. Liquidity Setup** | Active 5m Liquidity Sweep (25 pts) OR Clearance ≥ 1.0x ATR to Key Level (15 pts) | **25 Pts** |
-| **4. Trigger Precision**| 1m Close vs EMA-20 & RSI-14 > 50 (or < 50 for `MULTDOWN`) | **25 Pts** |
+| :--- | :--- | :---: |
+| **1. HTF Macro Bias** | Price > 15m EMA-200 (`MULTUP`) or Price < 15m EMA-200 (`MULTDOWN`) | **20 Pts** |
+| **2. Regime Quality** | 5m ADX ≥ 20 and ATR Ratio ≤ 1.5 (20 pts) / ADX ≥ 18 & ATR ≤ 1.7 (10 pts) | **20 Pts** |
+| **3. Liquidity Sweep + 3m FVG** | Active 5m Sweep + 3m FVG (25 pts) / 5m Sweep (18 pts) / 3m FVG (15 pts) | **25 Pts** |
+| **4. Silver Bullet Window** | Current CAT time falls inside active ICT Silver Bullet window | **20 Pts** |
+| **5. 1m Trigger Precision** | 1m Close vs EMA-20 & RSI-14 > 50 (or < 50 for `MULTDOWN`) (15 pts) | **15 Pts** |
 
 ---
 

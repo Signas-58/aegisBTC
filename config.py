@@ -24,12 +24,22 @@ MT5_VOLUME = float(os.getenv("MT5_VOLUME", "0.01"))
 # Multi-Timeframe Ingestion
 TF_MACRO = 900  # 15-Minute Candles (Macro Horizon)
 TF_STRUCTURE = 300  # 5-Minute Candles (Structure & Liquidity Horizon)
+TF_ENTRY = 180  # 3-Minute Candles (Execution & FVG Horizon)
 TF_TRIGGER = 60  # 1-Minute Candles (Trigger Horizon)
+
+# ICT Silver Bullet CAT Session Windows (UTC+2 / Central Africa Time)
+SILVER_BULLET_WINDOWS_CAT = [
+    ("09:00", "10:00"),  # London Silver Bullet
+    ("16:00", "17:00"),  # NY AM Silver Bullet
+    ("20:00", "21:00"),  # NY PM Silver Bullet
+]
+STRICT_SILVER_BULLET_GATE = False  # If True: Block trades outside SB windows. If False: Award 20 scoring points during windows.
 
 # Strategy & Dynamic ATR Scaling Factors
 ADX_MIN_THRESHOLD = 20  # Minimum 5m ADX required
 MIN_CONFIDENCE_SCORE = 75  # 75% Intelligence Score required for entry
 PROXIMITY_GUARD_ATR_MULT = 0.5  # Key level clearance buffer = 0.5x 5m ATR
+FVG_MIN_ATR_RATIO = 0.3  # Minimum imbalance size relative to 3m ATR
 
 # Fixed USD Risk Envelope ($20 Balance Protection)
 STAKE = 1.00  # Deriv API stake

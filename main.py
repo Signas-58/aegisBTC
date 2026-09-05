@@ -34,9 +34,10 @@ def print_banner():
 ================================================================================
     AEGIS-BTC: Multi-Timeframe Algorithmic Engine for Deriv Bitcoin Multipliers
 ================================================================================
-  [AEGIS-BTC INITIALIZED - SYMBOL: {config.SYMBOL} | STAKE: ${config.STAKE:.2f} | LEVERAGE: x{config.MULTIPLIER_LEVERAGE}]
+  [AEGIS-BTC HYBRID INITIALIZED - SYMBOL: {config.SYMBOL} | STAKE: ${config.STAKE:.2f} | LEVERAGE: x{config.MULTIPLIER_LEVERAGE}]
 --------------------------------------------------------------------------------
-  Timeframe Ingestion : 15m (Macro) | 5m (Structure/ADX/ATR) | 1m (Trigger/EMA/RSI)
+  Timeframe Ingestion : 15m (Macro) | 5m (Sweep/ADX/ATR) | 3m (FVG) | 1m (Trigger)
+  ICT Silver Bullet   : CAT Session Windows (09:00-10:00, 16:00-17:00, 20:00-21:00)
   Risk Profile        : Hard SL: ${config.HARD_STOP_LOSS_USD:.2f} | Break-Even: +${config.BREAK_EVEN_TRIGGER:.2f}
                         Step Ratchet: +${config.TRAILING_STEP_USD:.2f} | Trail Gap: ${config.TRAILING_GAP_USD:.2f}
   Safety Safeguards   : Loss Quarantine: {config.COOLDOWN_AFTER_LOSS_SECONDS}s (10m) | Max Daily Loss: ${config.MAX_DAILY_LOSS_USD:.2f}
@@ -65,14 +66,17 @@ def run_self_validation() -> bool:
     assert len(ema_20) == len(test_prices), "EMA output length mismatch"
     assert len(rsi_14) == len(test_prices), "RSI output length mismatch"
 
-    # 3. Intelligence Matrix Check
+    # 3. Intelligence Matrix Check (5-Vector 100-Point Matrix)
     score, breakdown = calculate_intelligence_score(
         direction=config.CONTRACT_TYPE_UP,
         current_price=65000.0,
         ema_200_15m=64000.0,
         regime="REGIME_TRENDING",
         adx_5m=25.0,
+        atr_ratio_5m=1.0,
         has_liquidity_sweep=True,
+        has_fvg=True,
+        in_silver_bullet=True,
         key_level_clearance_atr=1.5,
         close_1m=65000.0,
         ema_20_1m=64950.0,
@@ -123,23 +127,25 @@ async def run_dry_run_simulation():
     engine = AegisExecutionEngine()
     
     # 1. Ingest synthetic candle streams simulating a strong MTF bullish breakout
-    logger.info("[STREAM INGESTION] Simulating live 15m, 5m, and 1m candle feeds for cryBTCUSD...")
+    logger.info("[STREAM INGESTION] Simulating live 15m, 5m, 3m, and 1m candle feeds for cryBTCUSD...")
     c_15m = generate_synthetic_candles(60, start_price=64000.0, trend=40.0)
     c_5m = generate_synthetic_candles(60, start_price=65200.0, trend=20.0)
+    c_3m = generate_synthetic_candles(60, start_price=65800.0, trend=12.0)
     c_1m = generate_synthetic_candles(60, start_price=66200.0, trend=8.0)
 
     # 2. Run Strategy Analysis
-    analysis = analyze_market_and_generate_signal(c_15m, c_5m, c_1m)
+    analysis = analyze_market_and_generate_signal(c_15m, c_5m, c_1m, c_3m)
     
     # Force high-confidence setup demonstration if synthetic data was neutral
     if analysis['signal'] == "NO_SIGNAL":
         analysis = {
             "signal": config.CONTRACT_TYPE_UP,
             "confidence_score": 100,
-            "reason": "MTF Score 100% (15m EMA-200 Bullish | 5m Trending ADX: 28 | 1m EMA-20 Crossover)",
+            "reason": "MTF Score 100% (15m EMA-200 Bullish | 5m ADX: 28 | 3m FVG Active | CAT Silver Bullet Active)",
             "current_price": 66400.0,
             "regime": "REGIME_TRENDING",
-            "atr_5m": 120.0
+            "atr_5m": 120.0,
+            "in_silver_bullet": True
         }
 
     logger.info(f"[STRATEGY ANALYSIS] Signal: {analysis['signal']} | Score: {analysis['confidence_score']}% | Price: ${analysis['current_price']:.2f}")
@@ -209,39 +215,37 @@ async def run_live_bot():
 
     try:
         while True:
-            # Check for open position status
             if is_mt5:
                 pos = client.get_open_position()
                 is_active = pos is not None
             else:
                 is_active = engine.position_mgr.is_open
 
-            # Dual-rate frequency model:
-            # - Idle Scanning Mode: 25 seconds
-            # - Active Position Tracking Mode: 1 second
             sleep_interval = 1.0 if is_active else 25.0
             await asyncio.sleep(sleep_interval)
 
             if is_mt5:
-                # Fetch fresh MTF candles directly from MT5 memory
                 client.fetch_mtf_candles()
                 candles_15m = client.candles_15m
                 candles_5m = client.candles_5m
+                candles_3m = client.candles_3m
                 candles_1m = client.candles_1m
             else:
                 await client.subscribe_mtf_candles(config.SYMBOL)
                 await asyncio.sleep(0.3)
                 candles_15m = client.candles_15m
                 candles_5m = client.candles_5m
+                candles_3m = client.candles_5m
                 candles_1m = client.candles_1m
 
             # Run Strategy Analysis on Ingested Candles
-            analysis = analyze_market_and_generate_signal(candles_15m, candles_5m, candles_1m)
+            analysis = analyze_market_and_generate_signal(candles_15m, candles_5m, candles_1m, candles_3m)
 
             current_price = analysis.get("current_price") or (client.get_latest_price() if is_mt5 else 0.0)
             confidence_score = analysis.get("confidence_score", 0)
             regime = analysis.get("regime", "REGIME_CONSOLIDATING")
             signal = analysis.get("signal", "NO_SIGNAL")
+            in_sb = analysis.get("in_silver_bullet", False)
 
             if is_active:
                 if is_mt5 and pos:
@@ -258,9 +262,10 @@ async def run_live_bot():
                             f"PnL: ${profit:.2f} | SL: ${pos['sl']:.2f}"
                         )
             else:
+                sb_str = "ACTIVE 🔥" if in_sb else "Inactive 💤"
                 logger.info(
                     f"[SCANNING TICK 25s] {client.symbol}: ${current_price:.2f} | "
-                    f"Regime: {regime} | Setup Score: {confidence_score}% | "
+                    f"Silver Bullet: {sb_str} | Regime: {regime} | Setup Score: {confidence_score}% | "
                     f"Signal: {signal} | Status: Idle Scanning..."
                 )
 

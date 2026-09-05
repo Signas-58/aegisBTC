@@ -16,6 +16,74 @@ from intelligence import (
 )
 
 
+from datetime import datetime, timezone, timedelta
+
+def is_in_silver_bullet_window(dt: datetime = None) -> bool:
+    """
+    Check if the given datetime falls within active ICT Silver Bullet windows in Central Africa Time (CAT / UTC+2).
+    Default dt is current UTC time converted to CAT.
+    """
+    if dt is None:
+        dt = datetime.now(timezone.utc) + timedelta(hours=2)
+    elif dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc) + timedelta(hours=2)
+    else:
+        dt = dt.astimezone(timezone(timedelta(hours=2)))
+
+    time_str = dt.strftime("%H:%M")
+    
+    for start_str, end_str in config.SILVER_BULLET_WINDOWS_CAT:
+        if start_str <= time_str < end_str:
+            return True
+            
+    return False
+
+
+def detect_3m_fvg(
+    candles_3m: List[Dict[str, float]],
+    direction: str,
+    atr_3m: float = 0.0
+) -> Tuple[bool, float]:
+    """
+    Detect 3-minute Fair Value Gap (FVG) imbalance formation:
+    - Bullish 3m FVG: 3m_Low[i] > 3m_High[i-2] with displacement candle at i-1.
+    - Bearish 3m FVG: 3m_High[i] < 3m_Low[i-2] with displacement candle at i-1.
+    Returns (has_fvg, gap_size).
+    """
+    if not candles_3m or len(candles_3m) < 3:
+        return False, 0.0
+
+    current_price = candles_3m[-1]['close']
+    min_gap_size = atr_3m * config.FVG_MIN_ATR_RATIO if atr_3m > 0 else 0.0
+
+    # Scan recent candles for active / retesting FVG zone
+    lookback = min(5, len(candles_3m) - 2)
+    
+    for idx in range(len(candles_3m) - 1, len(candles_3m) - 1 - lookback, -1):
+        if idx < 2:
+            break
+            
+        c_prev2 = candles_3m[idx - 2]
+        c_disp = candles_3m[idx - 1]
+        c_curr = candles_3m[idx]
+
+        if direction == config.CONTRACT_TYPE_UP:
+            if c_curr['low'] > c_prev2['high']:
+                gap_size = c_curr['low'] - c_prev2['high']
+                if c_disp['close'] > c_disp['open'] and gap_size >= min_gap_size:
+                    if current_price >= c_prev2['high']:
+                        return True, gap_size
+
+        elif direction == config.CONTRACT_TYPE_DOWN:
+            if c_curr['high'] < c_prev2['low']:
+                gap_size = c_prev2['low'] - c_curr['high']
+                if c_disp['close'] < c_disp['open'] and gap_size >= min_gap_size:
+                    if current_price <= c_prev2['low']:
+                        return True, gap_size
+
+    return False, 0.0
+
+
 def check_dynamic_proximity_guard(
     current_price: float,
     htf_resistance: float,
@@ -66,12 +134,10 @@ def detect_liquidity_sweep(
     last_candle = candles_5m[-1]
     
     if direction == config.CONTRACT_TYPE_UP:
-        # Bullish sweep: Low pierced support, close recovered above support
         if last_candle['low'] <= htf_support and last_candle['close'] > htf_support:
             return True
             
     elif direction == config.CONTRACT_TYPE_DOWN:
-        # Bearish sweep: High pierced resistance, close rejected below resistance
         if last_candle['high'] >= htf_resistance and last_candle['close'] < htf_resistance:
             return True
             
@@ -81,21 +147,13 @@ def detect_liquidity_sweep(
 def analyze_market_and_generate_signal(
     candles_15m: List[Dict[str, float]],
     candles_5m: List[Dict[str, float]],
-    candles_1m: List[Dict[str, float]]
+    candles_1m: List[Dict[str, float]],
+    candles_3m: List[Dict[str, float]] = None
 ) -> Dict[str, Any]:
     """
-    Main MTF Analysis Entry Point.
-    Processes 15m (Macro), 5m (Structure/Regime), 1m (Trigger) candles.
-    Returns signal dict:
-      {
-        "signal": "MULTUP" | "MULTDOWN" | "NO_SIGNAL",
-        "confidence_score": float,
-        "reason": str,
-        "breakdown": dict,
-        "current_price": float,
-        "regime": str,
-        "atr_5m": float
-      }
+    Main MTF Analysis Entry Point for Aegis-BTC Hybrid.
+    Processes 15m (Macro), 5m (Structure/Regime), 3m (FVG/Execution), 1m (Trigger) candles.
+    Returns signal dict.
     """
     no_signal_res = {
         "signal": "NO_SIGNAL",
@@ -104,13 +162,18 @@ def analyze_market_and_generate_signal(
         "breakdown": {},
         "current_price": 0.0,
         "regime": "UNKNOWN",
-        "atr_5m": 0.0
+        "atr_5m": 0.0,
+        "in_silver_bullet": False
     }
     
     if len(candles_15m) < 20 or len(candles_5m) < 20 or len(candles_1m) < 20:
         return no_signal_res
 
+    if candles_3m is None:
+        candles_3m = candles_5m
+
     current_price = candles_1m[-1]['close']
+    in_sb = is_in_silver_bullet_window()
 
     # 1. 15m Macro Stream Analysis
     closes_15m = [c['close'] for c in candles_15m]
@@ -138,10 +201,15 @@ def analyze_market_and_generate_signal(
             "breakdown": {},
             "current_price": current_price,
             "regime": regime,
-            "atr_5m": atr_5m
+            "atr_5m": atr_5m,
+            "in_silver_bullet": in_sb
         }
 
-    # 3. 1m Trigger Analysis
+    # 3. 3m ATR & FVG Analysis
+    _, atr_3m_list = calculate_tr_and_atr(candles_3m, 14)
+    atr_3m = atr_3m_list[-1] if atr_3m_list else atr_5m
+
+    # 4. 1m Trigger Analysis
     closes_1m = [c['close'] for c in candles_1m]
     ema_20_1m_list = calculate_ema(closes_1m, 20)
     ema_20_1m = ema_20_1m_list[-1]
@@ -153,7 +221,6 @@ def analyze_market_and_generate_signal(
     potential_signals = []
     
     for candidate_dir in [config.CONTRACT_TYPE_UP, config.CONTRACT_TYPE_DOWN]:
-        # Proximity Guard Check
         allowed, clearance_atr = check_dynamic_proximity_guard(
             current_price, htf_resistance, htf_support, atr_5m, candidate_dir
         )
@@ -161,14 +228,18 @@ def analyze_market_and_generate_signal(
             continue
             
         has_sweep = detect_liquidity_sweep(candles_5m, htf_resistance, htf_support, candidate_dir)
-        
+        has_fvg, gap_size = detect_3m_fvg(candles_3m, candidate_dir, atr_3m)
+
         score, breakdown = calculate_intelligence_score(
             direction=candidate_dir,
             current_price=current_price,
             ema_200_15m=ema_200_15m,
             regime=regime,
             adx_5m=adx_5m,
+            atr_ratio_5m=atr_ratio_5m,
             has_liquidity_sweep=has_sweep,
+            has_fvg=has_fvg,
+            in_silver_bullet=in_sb,
             key_level_clearance_atr=clearance_atr,
             close_1m=close_1m,
             ema_20_1m=ema_20_1m,
@@ -180,7 +251,7 @@ def analyze_market_and_generate_signal(
                 "signal": candidate_dir,
                 "confidence_score": score,
                 "breakdown": breakdown,
-                "reason": f"MTF Score {score}% >= {config.MIN_CONFIDENCE_SCORE}% ({candidate_dir})"
+                "reason": f"MTF Hybrid Score {score}% >= {config.MIN_CONFIDENCE_SCORE}% ({candidate_dir})"
             })
 
     if not potential_signals:
@@ -191,13 +262,15 @@ def analyze_market_and_generate_signal(
             "breakdown": {},
             "current_price": current_price,
             "regime": regime,
-            "atr_5m": atr_5m
+            "atr_5m": atr_5m,
+            "in_silver_bullet": in_sb
         }
 
-    # Select candidate with highest confidence score
     best_signal = max(potential_signals, key=lambda s: s['confidence_score'])
     best_signal["current_price"] = current_price
     best_signal["regime"] = regime
     best_signal["atr_5m"] = atr_5m
+    best_signal["in_silver_bullet"] = in_sb
 
     return best_signal
+

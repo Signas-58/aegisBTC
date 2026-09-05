@@ -41,6 +41,7 @@ class MT5Client:
         # Ingested MTF candles
         self.candles_15m: List[Dict[str, float]] = []
         self.candles_5m: List[Dict[str, float]] = []
+        self.candles_3m: List[Dict[str, float]] = []
         self.candles_1m: List[Dict[str, float]] = []
         
         # Position tracking
@@ -114,7 +115,7 @@ class MT5Client:
 
     def fetch_mtf_candles(self) -> bool:
         """
-        Ingest 15m, 5m, and 1m OHLC rates directly from MT5 terminal memory.
+        Ingest 15m, 5m, 3m, and 1m OHLC rates directly from MT5 terminal memory.
         """
         if not self.is_connected or mt5 is None:
             return False
@@ -122,6 +123,7 @@ class MT5Client:
         timeframes = [
             (mt5.TIMEFRAME_M15, "15m"),
             (mt5.TIMEFRAME_M5, "5m"),
+            (mt5.TIMEFRAME_M3, "3m"),
             (mt5.TIMEFRAME_M1, "1m")
         ]
 
@@ -146,6 +148,8 @@ class MT5Client:
                 self.candles_15m = formatted
             elif tf == mt5.TIMEFRAME_M5:
                 self.candles_5m = formatted
+            elif tf == mt5.TIMEFRAME_M3:
+                self.candles_3m = formatted
             elif tf == mt5.TIMEFRAME_M1:
                 self.candles_1m = formatted
 
