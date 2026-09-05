@@ -306,6 +306,42 @@ def spawn_terminal_window(mode: str = None):
     subprocess.Popen(cmd, shell=True)
 
 
+def prompt_strategy_mode_if_needed(args):
+    """
+    Prompt user interactively for strategy mode if --mode is not provided on CLI.
+    """
+    if args.mode:
+        if args.mode.lower() == "classic":
+            config.STRATEGY_MODE = "AEGIS_CLASSIC"
+        else:
+            config.STRATEGY_MODE = "HYBRID_SILVER_BULLET"
+        return
+
+    # Only prompt interactively for live or test mode if running in an interactive terminal
+    if (args.live or args.test) and sys.stdin.isatty():
+        print("\n================================================================================")
+        print("    AEGIS-BTC STRATEGY EXECUTION MODE SELECTOR")
+        print("================================================================================")
+        print("  Select Strategy Execution Mode:")
+        print("    [1] Option 1: Aegis Classic Strategy (24/7 MTF Sweep & Momentum)")
+        print("    [2] Option 2: ICT Silver Bullet Hybrid Strategy (CAT Timing + 3m FVG) [Default]")
+        print("================================================================================")
+        try:
+            choice = input("  Enter choice (1 or 2, default 2): ").strip()
+            if choice == "1":
+                config.STRATEGY_MODE = "AEGIS_CLASSIC"
+                args.mode = "classic"
+            else:
+                config.STRATEGY_MODE = "HYBRID_SILVER_BULLET"
+                args.mode = "hybrid"
+        except Exception:
+            config.STRATEGY_MODE = "HYBRID_SILVER_BULLET"
+            args.mode = "hybrid"
+    else:
+        config.STRATEGY_MODE = os.getenv("STRATEGY_MODE", "HYBRID_SILVER_BULLET").upper()
+        args.mode = "classic" if config.STRATEGY_MODE == "AEGIS_CLASSIC" else "hybrid"
+
+
 def main():
     parser = argparse.ArgumentParser(description="Aegis-BTC Bitcoin Multipliers Trading Engine")
     parser.add_argument("--validate", action="store_true", help="Run self-validation checks and exit")
@@ -317,12 +353,8 @@ def main():
 
     args = parser.parse_args()
 
-    # Override config.STRATEGY_MODE if --mode CLI flag is passed
-    if args.mode:
-        if args.mode.lower() == "classic":
-            config.STRATEGY_MODE = "AEGIS_CLASSIC"
-        else:
-            config.STRATEGY_MODE = "HYBRID_SILVER_BULLET"
+    # Prompt user or apply --mode flag
+    prompt_strategy_mode_if_needed(args)
 
     # Automatically force visible desktop terminal window whenever --live is invoked
     if args.live and not args.child:
