@@ -56,7 +56,8 @@ class TestAegisBTC(unittest.TestCase):
         self.assertEqual(regime_consolidating, REGIME_CONSOLIDATING)
 
     def test_intelligence_scoring_matrix(self):
-        score, breakdown = calculate_intelligence_score(
+        # Test HYBRID_SILVER_BULLET Mode
+        score_hybrid, breakdown_hybrid = calculate_intelligence_score(
             direction=config.CONTRACT_TYPE_UP,
             current_price=65000.0,
             ema_200_15m=64000.0,
@@ -69,10 +70,33 @@ class TestAegisBTC(unittest.TestCase):
             key_level_clearance_atr=1.5,
             close_1m=65000.0,
             ema_20_1m=64900.0,
-            rsi_14_1m=60.0
+            rsi_14_1m=60.0,
+            strategy_mode="HYBRID_SILVER_BULLET"
         )
-        self.assertEqual(score, 100)
-        self.assertTrue(breakdown["meets_threshold"])
+        self.assertEqual(score_hybrid, 100)
+        self.assertTrue(breakdown_hybrid["meets_threshold"])
+        self.assertEqual(breakdown_hybrid["mode"], "HYBRID_SILVER_BULLET")
+
+        # Test AEGIS_CLASSIC Mode
+        score_classic, breakdown_classic = calculate_intelligence_score(
+            direction=config.CONTRACT_TYPE_UP,
+            current_price=65000.0,
+            ema_200_15m=64000.0,
+            regime=REGIME_TRENDING,
+            adx_5m=25.0,
+            atr_ratio_5m=1.0,
+            has_liquidity_sweep=True,
+            has_fvg=False,
+            in_silver_bullet=False,
+            key_level_clearance_atr=1.5,
+            close_1m=65000.0,
+            ema_20_1m=64900.0,
+            rsi_14_1m=60.0,
+            strategy_mode="AEGIS_CLASSIC"
+        )
+        self.assertEqual(score_classic, 100)
+        self.assertTrue(breakdown_classic["meets_threshold"])
+        self.assertEqual(breakdown_classic["mode"], "AEGIS_CLASSIC")
 
     def test_dynamic_proximity_guard(self):
         atr_5m = 100.0

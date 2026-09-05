@@ -30,12 +30,14 @@ logger = logging.getLogger("AegisBTC.Main")
 
 
 def print_banner():
+    mode_name = "OPTION 1: AEGIS CLASSIC (24/7 Sweep & Momentum)" if config.STRATEGY_MODE == "AEGIS_CLASSIC" else "OPTION 2: ICT SILVER BULLET HYBRID (CAT Timing + 3m FVG)"
     banner = f"""
 ================================================================================
     AEGIS-BTC: Multi-Timeframe Algorithmic Engine for Deriv Bitcoin Multipliers
 ================================================================================
-  [AEGIS-BTC HYBRID INITIALIZED - SYMBOL: {config.SYMBOL} | STAKE: ${config.STAKE:.2f} | LEVERAGE: x{config.MULTIPLIER_LEVERAGE}]
+  [AEGIS-BTC INITIALIZED - SYMBOL: {config.SYMBOL} | STAKE: ${config.STAKE:.2f} | LEVERAGE: x{config.MULTIPLIER_LEVERAGE}]
 --------------------------------------------------------------------------------
+  ACTIVE STRATEGY     : {mode_name}
   Timeframe Ingestion : 15m (Macro) | 5m (Sweep/ADX/ATR) | 3m (FVG) | 1m (Trigger)
   ICT Silver Bullet   : CAT Session Windows (09:00-10:00, 16:00-17:00, 20:00-21:00)
   Risk Profile        : Hard SL: ${config.HARD_STOP_LOSS_USD:.2f} | Break-Even: +${config.BREAK_EVEN_TRIGGER:.2f}
@@ -290,16 +292,17 @@ async def run_live_bot():
         client.close()
 
 
-def spawn_terminal_window():
+def spawn_terminal_window(mode: str = None):
     """
     Launch live bot in a separate, visible PowerShell window on Windows desktop.
     """
     import subprocess
+    mode_flag = f" --mode {mode}" if mode else ""
     cmd = (
         'powershell -Command "Start-Process powershell '
-        '-ArgumentList \'-NoExit\', \'-Command\', \'cd \\"c:\\Workspace\\aegisBTC\\"; python main.py --live --child\'"'
+        f'-ArgumentList \'-NoExit\', \'-Command\', \'cd \\"c:\\Workspace\\aegisBTC\\"; python main.py --live --child{mode_flag}\'"'
     )
-    logger.info("Opening visible command window on desktop for Aegis-BTC...")
+    logger.info(f"Opening visible command window on desktop for Aegis-BTC (Mode: {config.STRATEGY_MODE})...")
     subprocess.Popen(cmd, shell=True)
 
 
@@ -308,19 +311,27 @@ def main():
     parser.add_argument("--validate", action="store_true", help="Run self-validation checks and exit")
     parser.add_argument("--test", action="store_true", help="Run dry-run simulation mode")
     parser.add_argument("--live", action="store_true", help="Run live trading bot mode")
+    parser.add_argument("--mode", choices=["classic", "hybrid", "silverbullet"], help="Set Strategy Mode: 'classic' (Option 1) or 'hybrid'/'silverbullet' (Option 2)")
     parser.add_argument("--open-terminal", action="store_true", help="Pop up a visible window and run live bot")
     parser.add_argument("--child", action="store_true", help="Internal flag indicating execution inside spawned window")
 
     args = parser.parse_args()
 
+    # Override config.STRATEGY_MODE if --mode CLI flag is passed
+    if args.mode:
+        if args.mode.lower() == "classic":
+            config.STRATEGY_MODE = "AEGIS_CLASSIC"
+        else:
+            config.STRATEGY_MODE = "HYBRID_SILVER_BULLET"
+
     # Automatically force visible desktop terminal window whenever --live is invoked
     if args.live and not args.child:
-        logger.info("Auto-spawning standalone visible desktop terminal for Aegis-BTC...")
-        spawn_terminal_window()
+        logger.info(f"Auto-spawning standalone visible desktop terminal for Aegis-BTC (Mode: {config.STRATEGY_MODE})...")
+        spawn_terminal_window(args.mode)
         sys.exit(0)
 
     if args.open_terminal:
-        spawn_terminal_window()
+        spawn_terminal_window(args.mode)
         sys.exit(0)
 
     if args.validate:

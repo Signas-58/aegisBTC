@@ -27,6 +27,9 @@ TF_STRUCTURE = 300  # 5-Minute Candles (Structure & Liquidity Horizon)
 TF_ENTRY = 180  # 3-Minute Candles (Execution & FVG Horizon)
 TF_TRIGGER = 60  # 1-Minute Candles (Trigger Horizon)
 
+# Dual Strategy Modes: "AEGIS_CLASSIC" (Option 1) | "HYBRID_SILVER_BULLET" (Option 2)
+STRATEGY_MODE = os.getenv("STRATEGY_MODE", "HYBRID_SILVER_BULLET").upper()
+
 # ICT Silver Bullet CAT Session Windows (UTC+2 / Central Africa Time)
 SILVER_BULLET_WINDOWS_CAT = [
     ("09:00", "10:00"),  # London Silver Bullet

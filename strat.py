@@ -148,13 +148,16 @@ def analyze_market_and_generate_signal(
     candles_15m: List[Dict[str, float]],
     candles_5m: List[Dict[str, float]],
     candles_1m: List[Dict[str, float]],
-    candles_3m: List[Dict[str, float]] = None
+    candles_3m: List[Dict[str, float]] = None,
+    strategy_mode: str = None
 ) -> Dict[str, Any]:
     """
-    Main MTF Analysis Entry Point for Aegis-BTC Hybrid.
+    Main MTF Analysis Entry Point for Aegis-BTC.
     Processes 15m (Macro), 5m (Structure/Regime), 3m (FVG/Execution), 1m (Trigger) candles.
+    Supports Dual Strategy Modes ("AEGIS_CLASSIC" and "HYBRID_SILVER_BULLET").
     Returns signal dict.
     """
+    mode = (strategy_mode or config.STRATEGY_MODE).upper()
     no_signal_res = {
         "signal": "NO_SIGNAL",
         "confidence_score": 0,
@@ -163,7 +166,8 @@ def analyze_market_and_generate_signal(
         "current_price": 0.0,
         "regime": "UNKNOWN",
         "atr_5m": 0.0,
-        "in_silver_bullet": False
+        "in_silver_bullet": False,
+        "strategy_mode": mode
     }
     
     if len(candles_15m) < 20 or len(candles_5m) < 20 or len(candles_1m) < 20:
@@ -202,7 +206,8 @@ def analyze_market_and_generate_signal(
             "current_price": current_price,
             "regime": regime,
             "atr_5m": atr_5m,
-            "in_silver_bullet": in_sb
+            "in_silver_bullet": in_sb,
+            "strategy_mode": mode
         }
 
     # 3. 3m ATR & FVG Analysis
@@ -243,7 +248,8 @@ def analyze_market_and_generate_signal(
             key_level_clearance_atr=clearance_atr,
             close_1m=close_1m,
             ema_20_1m=ema_20_1m,
-            rsi_14_1m=rsi_14_1m
+            rsi_14_1m=rsi_14_1m,
+            strategy_mode=mode
         )
         
         if score >= config.MIN_CONFIDENCE_SCORE:
@@ -251,7 +257,7 @@ def analyze_market_and_generate_signal(
                 "signal": candidate_dir,
                 "confidence_score": score,
                 "breakdown": breakdown,
-                "reason": f"MTF Hybrid Score {score}% >= {config.MIN_CONFIDENCE_SCORE}% ({candidate_dir})"
+                "reason": f"[{mode}] MTF Score {score}% >= {config.MIN_CONFIDENCE_SCORE}% ({candidate_dir})"
             })
 
     if not potential_signals:

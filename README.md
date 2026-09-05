@@ -106,27 +106,49 @@ MULTIPLIER_LEVERAGE=100
 
 ---
 
-## 💻 Operating Modes
+## 💻 Operating Modes & Strategy Selection
+
+Aegis-BTC supports **Dual Strategy Execution Modes**:
+- **Option 1: Aegis Classic (`--mode classic`)**: 24/7 Multi-Timeframe Liquidity Sweep & Momentum Engine.
+- **Option 2: ICT Silver Bullet Hybrid (`--mode hybrid`) [Default]**: Session timing window filter (CAT / UTC+2) with 3m Fair Value Gap (FVG) sweep-displacement scoring.
 
 ### 1-Click Desktop Launcher (Recommended)
-Double-click **`start_live_bot.bat`** to open a visible, interactive desktop terminal window.
+Double-click **`start_live_bot.bat`**. An interactive menu prompts you to select your preferred strategy mode before opening the standalone trading window:
+```
+================================================================================
+    AEGIS-BTC MULTI-STRATEGY LAUNCHER
+================================================================================
+  Select Strategy Execution Mode:
+    [1] Option 1: Aegis Classic Strategy (24/7 MTF Sweep & Momentum)
+    [2] Option 2: ICT Silver Bullet Hybrid Strategy (CAT Timing + 3m FVG) [Default]
+================================================================================
+```
 
 ### Self-Validation Mode
-Verify system configuration, math calculations, and risk engine rules:
+Verify system configuration, math calculations, and risk engine rules for either mode:
 ```bash
-python main.py --validate
+# Validate Classic Mode
+python main.py --validate --mode classic
+
+# Validate Silver Bullet Hybrid Mode
+python main.py --validate --mode hybrid
 ```
 
 ### Dry-Run Simulation Mode
 Test strategy analysis and step-ratchet execution using simulated tick sequences:
 ```bash
-python main.py --test
+python main.py --test --mode classic
+python main.py --test --mode hybrid
 ```
 
 ### Live Bot Execution Mode
 Run live MTF scanner and sub-20ms automated trade execution:
 ```bash
-python main.py --live
+# Launch Aegis Classic Live Bot
+python main.py --live --mode classic
+
+# Launch ICT Silver Bullet Hybrid Live Bot
+python main.py --live --mode hybrid
 ```
 
 ---
