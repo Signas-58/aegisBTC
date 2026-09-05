@@ -179,6 +179,7 @@ class MT5Client:
             logger.error(f"Cannot fetch tick info for {self.symbol}.")
             return None
 
+        order_type = mt5.ORDER_TYPE_BUY if signal_type in (config.CONTRACT_TYPE_UP, "BUY", "MULTUP") else mt5.ORDER_TYPE_SELL
         price_distance = (stop_loss_usd / self.volume) if self.volume > 0 else 75.0
 
         if order_type == mt5.ORDER_TYPE_BUY:
