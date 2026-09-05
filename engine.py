@@ -238,18 +238,19 @@ class AegisExecutionEngine:
         self.daily_pnl += pnl
         now = time.time()
 
+        peak = self.position_mgr.peak_pnl
         if pnl >= 0:
             self.winning_trades += 1
             self.consecutive_losses = 0
             self.cooldown_until = now + config.COOLDOWN_AFTER_WIN_SECONDS
-            logger.info(f"[TRADE WIN] Profit: +${pnl:.2f} | 30s Cooldown applied. Total Daily PnL: ${self.daily_pnl:.2f}")
+            logger.info(f"[TRADE WIN] Net PnL: +${pnl:.2f} | Peak PnL: +${peak:.2f} | 30s Cooldown applied. Total Daily PnL: ${self.daily_pnl:+.2f}")
         else:
             self.losing_trades += 1
             self.consecutive_losses += 1
             self.quarantine_until = now + config.COOLDOWN_AFTER_LOSS_SECONDS
             logger.warning(
-                f"[TRADE LOSS] Loss: -${abs(pnl):.2f} | 10-MINUTE LOSS QUARANTINE APPLIED ({config.COOLDOWN_AFTER_LOSS_SECONDS}s). "
-                f"Consecutive Losses: {self.consecutive_losses}/{config.MAX_CONSECUTIVE_LOSSES} | Total Daily PnL: ${self.daily_pnl:.2f}"
+                f"[TRADE LOSS] Net PnL: -${abs(pnl):.2f} | Peak PnL: ${peak:+.2f} | 10-MINUTE LOSS QUARANTINE APPLIED ({config.COOLDOWN_AFTER_LOSS_SECONDS}s). "
+                f"Consecutive Losses: {self.consecutive_losses}/{config.MAX_CONSECUTIVE_LOSSES} | Total Daily PnL: ${self.daily_pnl:+.2f}"
             )
 
         # Check circuit breakers immediately after recording

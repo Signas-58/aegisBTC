@@ -262,10 +262,11 @@ async def run_live_bot():
                         client.close_position(pos["ticket"])
                         engine._record_trade_result(profit)
                     else:
+                        peak = engine.position_mgr.peak_pnl
                         logger.info(
                             f"[ACTIVE TRADE TICK 1s] Ticket: #{pos['ticket']} | Type: {pos['type']} | "
                             f"Entry: ${pos['price_open']:.2f} | Current: ${pos['price_current']:.2f} | "
-                            f"PnL: ${profit:.2f} | SL: ${pos['sl']:.2f}"
+                            f"PnL: ${profit:+.2f} | Peak PnL: ${peak:+.2f} | SL: ${pos['sl']:.2f}"
                         )
             else:
                 if config.STRATEGY_MODE == "AEGIS_CLASSIC":
