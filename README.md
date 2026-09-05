@@ -15,16 +15,27 @@
 
 ## 🌟 Core Features
 
+- **ICT Silver Bullet CAT Timing Windows**:
+  - Automatically identifies high-probability Central Africa Time (CAT / UTC+2) session open execution windows:
+    - **London Silver Bullet**: `09:00 – 10:00 CAT`
+    - **NY AM Silver Bullet**: `16:00 – 17:00 CAT`
+    - **NY PM Silver Bullet**: `20:00 – 21:00 CAT`
+  - Active session windows award a **20-point bonus** in the confluence scoring matrix. Optional `STRICT_SILVER_BULLET_GATE` toggle blocks trades outside windows if enabled.
+- **3-Minute Fair Value Gap (FVG) & Sweep Scanner**:
+  - Scans for **5-minute liquidity sweeps** (wicks extending past 15m swing levels with rejection closes).
+  - Detects **3-minute Fair Value Gap (FVG)** imbalance zones created by post-sweep displacement candles.
+- **5-Vector 100-Point Intelligence Matrix**:
+  - Top-down analysis across **15m** (Macro EMA-200 & Swings), **5m** (Sweeps/ADX/ATR), **3m** (FVG Execution), and **1m** (Trigger EMA-20 & RSI-14) streams.
+  - Requires a minimum score of **≥ 75%** for order execution.
 - **Dual Broker Engine**:
-  - **MetaTrader 5 (`mt5_client.py`)**: Direct C++ binary connection to **Weltrade** (or Deriv MT5). Sub-20ms order execution (`ORDER_TYPE_BUY` / `ORDER_TYPE_SELL`), direct memory candle ingestion, and zero token friction.
+  - **MetaTrader 5 (`mt5_client.py`)**: Direct C++ binary connection to **Weltrade** (or Deriv MT5). Sub-20ms order execution (`ORDER_TYPE_BUY` / `ORDER_TYPE_SELL`), direct memory candle ingestion (M15, M5, M3, M1), and zero token friction.
   - **Deriv WebSocket (`deriv_client.py`)**: Async WebSocket stream listener with REST Bearer authorization.
-- **Multi-Timeframe Intelligence Matrix**: Integrates 15m (Macro EMA-200 & Swings), 5m (Structure/ADX/ATR/Liquidity Sweeps), and 1m (Trigger EMA-20 & RSI-14) streams with a **100-Point Probability Matrix** (minimum 75% required for execution).
 - **Dynamic ATR Proximity Guard**: Volatility-adjusted key level clearance checks (`0.5x 5m ATR`).
 - **Step-Ratchet Trailing Engine**: 
   - Server-side hard SL at `-$0.75`.
   - Shift SL floor to `$0.00` (Break-Even) at `+$0.50` PnL.
   - Advance in `+$0.25` steps maintaining a `$0.50` trailing gap once peak PnL > `+$0.75`.
-- **Standalone Visible Desktop UI**: Auto-spawns an interactive PowerShell window on startup with live tick streaming, market regime status, setup scores, and signal notifications.
+- **Standalone Visible Desktop UI**: Auto-spawns an interactive PowerShell window on startup with live tick streaming, ICT Silver Bullet status, market regime status, setup scores, and signal notifications.
 - **Circuit Breakers & Safeguards**:
   - **Stake / Lot Volume**: Fixed `$1.00` stake / `0.01` micro lot.
   - **Leverage**: Capped `x100` multiplier leverage to resist BTC wicks.
