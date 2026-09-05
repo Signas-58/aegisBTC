@@ -30,7 +30,11 @@ logger = logging.getLogger("AegisBTC.Main")
 
 
 def print_banner():
-    mode_name = "OPTION 1: AEGIS CLASSIC (24/7 Sweep & Momentum)" if config.STRATEGY_MODE == "AEGIS_CLASSIC" else "OPTION 2: ICT SILVER BULLET HYBRID (CAT Timing + 3m FVG)"
+    is_classic = (config.STRATEGY_MODE == "AEGIS_CLASSIC")
+    mode_name = "OPTION 1: AEGIS CLASSIC (24/7 Sweep & Momentum)" if is_classic else "OPTION 2: ICT SILVER BULLET HYBRID (CAT Timing + 3m FVG)"
+    tf_info = "15m (Macro) | 5m (Structure/ADX/ATR) | 1m (Trigger/EMA/RSI)" if is_classic else "15m (Macro) | 5m (Sweep/ADX/ATR) | 3m (FVG) | 1m (Trigger)"
+    sb_info = "Disabled (Classic 24/7 Execution)" if is_classic else "CAT Session Windows (09:00-10:00, 16:00-17:00, 20:00-21:00)"
+    
     banner = f"""
 ================================================================================
     AEGIS-BTC: Multi-Timeframe Algorithmic Engine for Deriv Bitcoin Multipliers
@@ -38,8 +42,8 @@ def print_banner():
   [AEGIS-BTC INITIALIZED - SYMBOL: {config.SYMBOL} | STAKE: ${config.STAKE:.2f} | LEVERAGE: x{config.MULTIPLIER_LEVERAGE}]
 --------------------------------------------------------------------------------
   ACTIVE STRATEGY     : {mode_name}
-  Timeframe Ingestion : 15m (Macro) | 5m (Sweep/ADX/ATR) | 3m (FVG) | 1m (Trigger)
-  ICT Silver Bullet   : CAT Session Windows (09:00-10:00, 16:00-17:00, 20:00-21:00)
+  Timeframe Ingestion : {tf_info}
+  ICT Silver Bullet   : {sb_info}
   Risk Profile        : Hard SL: ${config.HARD_STOP_LOSS_USD:.2f} | Break-Even: +${config.BREAK_EVEN_TRIGGER:.2f}
                         Step Ratchet: +${config.TRAILING_STEP_USD:.2f} | Trail Gap: ${config.TRAILING_GAP_USD:.2f}
   Safety Safeguards   : Loss Quarantine: {config.COOLDOWN_AFTER_LOSS_SECONDS}s (10m) | Max Daily Loss: ${config.MAX_DAILY_LOSS_USD:.2f}
@@ -264,12 +268,19 @@ async def run_live_bot():
                             f"PnL: ${profit:.2f} | SL: ${pos['sl']:.2f}"
                         )
             else:
-                sb_str = "ACTIVE 🔥" if in_sb else "Inactive 💤"
-                logger.info(
-                    f"[SCANNING TICK 25s] {client.symbol}: ${current_price:.2f} | "
-                    f"Silver Bullet: {sb_str} | Regime: {regime} | Setup Score: {confidence_score}% | "
-                    f"Signal: {signal} | Status: Idle Scanning..."
-                )
+                if config.STRATEGY_MODE == "AEGIS_CLASSIC":
+                    logger.info(
+                        f"[SCANNING TICK 25s] {client.symbol}: ${current_price:.2f} | "
+                        f"Mode: Aegis Classic (24/7) | Regime: {regime} | Setup Score: {confidence_score}% | "
+                        f"Signal: {signal} | Status: Idle Scanning..."
+                    )
+                else:
+                    sb_str = "ACTIVE 🔥" if in_sb else "Inactive 💤"
+                    logger.info(
+                        f"[SCANNING TICK 25s] {client.symbol}: ${current_price:.2f} | "
+                        f"Silver Bullet: {sb_str} | Regime: {regime} | Setup Score: {confidence_score}% | "
+                        f"Signal: {signal} | Status: Idle Scanning..."
+                    )
 
             # Signal Trigger Check
             if signal != "NO_SIGNAL" and not is_active:
