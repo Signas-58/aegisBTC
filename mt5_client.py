@@ -263,6 +263,7 @@ class MT5Client:
     def modify_position_sl(self, ticket: int, sl_floor_usd: float) -> bool:
         """
         Dynamically modify/ratchet server-side Stop Loss price level on MetaTrader 5 terminal.
+        Clamps new SL to maximum server-allowed distance if stops_level is tight.
         """
         if not self.is_connected or mt5 is None:
             return False
@@ -275,14 +276,35 @@ class MT5Client:
         entry_price = float(pos.price_open)
         volume = float(pos.volume) if pos.volume > 0 else self.volume
 
-        # Convert USD SL floor into absolute price level based on position direction
+        sym_info = mt5.symbol_info(self.symbol)
+        tick = mt5.symbol_info_tick(self.symbol)
+
+        point = sym_info.point if sym_info and hasattr(sym_info, 'point') and sym_info.point > 0 else 0.01
+        stops_level = sym_info.stops_level if sym_info and hasattr(sym_info, 'stops_level') else 100
+        min_stop_distance = max(stops_level * point, 2.00)  # Safety clearance distance from spot tick
+
+        # Convert USD SL floor into target price level
         price_offset = sl_floor_usd / volume
         if pos.type == mt5.ORDER_TYPE_BUY:
-            new_sl = entry_price + price_offset
+            ideal_sl = entry_price + price_offset
+            # Ensure new SL is below current bid tick by at least min_stop_distance
+            max_allowed = (tick.bid - min_stop_distance) if tick else ideal_sl
+            new_sl = min(ideal_sl, max_allowed)
+            # Ensure trailing SL only ratchets UP for BUY positions
+            if pos.sl > 0:
+                new_sl = max(new_sl, pos.sl)
         else:
-            new_sl = entry_price - price_offset
+            ideal_sl = entry_price - price_offset
+            # Ensure new SL is above current ask tick by at least min_stop_distance
+            min_allowed = (tick.ask + min_stop_distance) if tick else ideal_sl
+            new_sl = max(ideal_sl, min_allowed)
+            # Ensure trailing SL only ratchets DOWN for SELL positions
+            if pos.sl > 0:
+                new_sl = min(new_sl, pos.sl)
 
-        # Avoid redundant server calls if SL has not shifted (> $0.10 difference)
+        new_sl = round(new_sl, 2)
+
+        # Avoid redundant server requests if SL has not shifted (> $0.10 difference)
         if abs(new_sl - pos.sl) < 0.10:
             return True
 
@@ -290,19 +312,40 @@ class MT5Client:
             "action": mt5.TRADE_ACTION_SLTP,
             "position": pos.ticket,
             "symbol": self.symbol,
-            "sl": round(new_sl, 2),
+            "sl": new_sl,
             "tp": pos.tp
         }
 
-        logger.info(f"Modifying MT5 Server SL for Ticket #{pos.ticket}: New SL = ${new_sl:.2f} (Floor: ${sl_floor_usd:+.2f})")
+        logger.info(f"Modifying MT5 Server SL for Ticket #{pos.ticket}: Target SL = ${new_sl:.2f} (Floor: ${sl_floor_usd:+.2f})")
         result = mt5.order_send(request)
 
         if result and result.retcode in (mt5.TRADE_RETCODE_DONE, 10009):
             logger.info(f"🎉 [MT5 SERVER SL UPDATED] Ticket #{pos.ticket} SL shifted to ${new_sl:.2f}")
             return True
         else:
-            err = result.comment if result else mt5.last_error()
-            logger.warning(f"Failed to update MT5 Server SL for Ticket #{pos.ticket}: {err}")
+            err = result.comment if result else (mt5.last_error() if mt5 else "Unknown error")
+            logger.warning(f"Failed to update MT5 Server SL for Ticket #{pos.ticket}: Retcode {result.retcode if result else 'N/A'} - {err}")
+            
+            # Fallback: if server rejected due to invalid stops (10016), adjust SL buffer slightly and retry
+            if result and result.retcode == 10016:  # TRADE_RETCODE_INVALID_STOPS
+                fallback_distance = min_stop_distance + 5.0
+                if pos.type == mt5.ORDER_TYPE_BUY:
+                    fallback_sl = round(tick.bid - fallback_distance, 2) if tick else new_sl
+                    if pos.sl > 0:
+                        fallback_sl = max(fallback_sl, pos.sl)
+                else:
+                    fallback_sl = round(tick.ask + fallback_distance, 2) if tick else new_sl
+                    if pos.sl > 0:
+                        fallback_sl = min(fallback_sl, pos.sl)
+
+                if abs(fallback_sl - pos.sl) >= 0.10:
+                    request["sl"] = fallback_sl
+                    logger.info(f"Retrying MT5 Server SL with fallback distance: Target SL = ${fallback_sl:.2f}")
+                    retry_res = mt5.order_send(request)
+                    if retry_res and retry_res.retcode in (mt5.TRADE_RETCODE_DONE, 10009):
+                        logger.info(f"🎉 [MT5 SERVER SL UPDATED - FALLBACK] Ticket #{pos.ticket} SL shifted to ${fallback_sl:.2f}")
+                        return True
+
             return False
 
     def close_position(self, ticket: Optional[int] = None) -> bool:
