@@ -180,14 +180,18 @@ class MT5Client:
             return None
 
         order_type = mt5.ORDER_TYPE_BUY if signal_type in (config.CONTRACT_TYPE_UP, "BUY", "MULTUP") else mt5.ORDER_TYPE_SELL
-        price_distance = (stop_loss_usd / self.volume) if self.volume > 0 else 75.0
+        sl_distance = (stop_loss_usd / self.volume) if self.volume > 0 else 75.0
+        tp_usd = self.volume * getattr(config, "TAKE_PROFIT_LOT_MULT", 100.0)
+        tp_distance = (tp_usd / self.volume) if self.volume > 0 else 100.0
 
         if order_type == mt5.ORDER_TYPE_BUY:
             price = tick.ask
-            sl = tick.bid - price_distance
+            sl = tick.bid - sl_distance
+            tp = price + tp_distance
         else:
             price = tick.bid
-            sl = tick.ask + price_distance
+            sl = tick.ask + sl_distance
+            tp = price - tp_distance
 
         # Determine supported filling mode (Weltrade requires ORDER_FILLING_FOK)
         sym_info = mt5.symbol_info(self.symbol)
@@ -205,7 +209,8 @@ class MT5Client:
             "volume": self.volume,
             "type": order_type,
             "price": price,
-            "sl": sl,
+            "sl": round(sl, 2),
+            "tp": round(tp, 2),
             "deviation": 20,
             "magic": 108920,
             "comment": "Aegis-BTC Engine Trade",
@@ -213,7 +218,7 @@ class MT5Client:
             "type_filling": filling_mode,
         }
 
-        logger.info(f"Sending MT5 Order: {signal_type} {self.volume} lots {self.symbol} @ ${price:.2f} | SL: ${sl:.2f}")
+        logger.info(f"Sending MT5 Order: {signal_type} {self.volume} lots {self.symbol} @ ${price:.2f} | SL: ${sl:.2f} | TP: ${tp:.2f} (+${tp_usd:.2f} target)")
         result = mt5.order_send(request)
 
         if result is None or result.retcode not in (mt5.TRADE_RETCODE_DONE, 10009):
