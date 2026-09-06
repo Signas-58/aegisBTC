@@ -49,7 +49,7 @@ STAKE = 1.00  # Deriv API stake
 HARD_STOP_LOSS_USD = 0.75  # Native server-side SL ($0.75 max risk)
 TAKE_PROFIT_LOT_MULT = 100.0  # Take Profit target = 100x Lot Size ($1.00 TP for 0.01 lot)
 BREAK_EVEN_TRIGGER = 0.50  # Shift SL floor to $0.00 at +$0.50 PnL
-TRAILING_STEP_USD = 0.25  # Lock in profits every +$0.25 step after +$0.75 PnL
+TRAILING_STEP_USD = 0.05  # Tight 5-cent ($0.05) step profit locking after +$0.75 PnL
 TRAILING_GAP_USD = 0.50  # Fixed $0.50 trailing offset behind peak PnL
 
 # Safety Cooldowns & Circuit Breakers

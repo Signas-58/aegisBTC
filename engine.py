@@ -63,12 +63,11 @@ class PositionManager:
                 self.current_sl_floor = 0.0
                 logger.info(f"[STEP-RATCHET] Break-Even triggered! SL Floor moved to $0.00 (Peak PnL: ${self.peak_pnl:.2f})")
 
-        # 2. Step Profit Locking (+$0.75 PnL and above)
-        if self.peak_pnl >= (config.BREAK_EVEN_TRIGGER + config.TRAILING_STEP_USD):
-            # Calculate dynamic step floor based on peak PnL and fixed trailing gap
+        # 2. Step Profit Locking (+$0.75 PnL and above in tight $0.05 / 5-cent steps)
+        if self.peak_pnl >= 0.75:
             trailing_floor = self.peak_pnl - config.TRAILING_GAP_USD
-            # Quantize to $0.25 step increments
-            quantized_step_floor = (int(trailing_floor / config.TRAILING_STEP_USD)) * config.TRAILING_STEP_USD
+            step = config.TRAILING_STEP_USD
+            quantized_step_floor = round(int(round(trailing_floor / step, 4)) * step, 2)
             
             if quantized_step_floor > self.current_sl_floor:
                 self.current_sl_floor = quantized_step_floor

@@ -128,13 +128,18 @@ class TestAegisBTC(unittest.TestCase):
         self.assertEqual(floor, 0.0)
         self.assertFalse(should_close)
 
-        # PnL +$1.00 -> Step Profit Lock (Peak +$1.00 - Gap $0.50 -> +$0.50)
-        should_close, floor, _ = pm.update_pnl_and_ratchet(1.00)
-        self.assertEqual(floor, 0.50)
+        # PnL +$0.75 -> Dynamic Step Profit Lock (Peak +$0.75 - Gap $0.50 -> +$0.25)
+        should_close, floor, _ = pm.update_pnl_and_ratchet(0.75)
+        self.assertEqual(floor, 0.25)
         self.assertFalse(should_close)
 
-        # Drop PnL to +$0.45 -> Breach floor at +$0.50 -> Trigger manual sell
-        should_close, floor, reason = pm.update_pnl_and_ratchet(0.45)
+        # PnL +$0.80 -> Tight 5-cent Step Profit Lock (Peak +$0.80 - Gap $0.50 -> +$0.30)
+        should_close, floor, _ = pm.update_pnl_and_ratchet(0.80)
+        self.assertEqual(floor, 0.30)
+        self.assertFalse(should_close)
+
+        # Drop PnL to +$0.25 -> Breach floor at +$0.30 -> Trigger manual sell
+        should_close, floor, reason = pm.update_pnl_and_ratchet(0.25)
         self.assertTrue(should_close)
 
     def test_native_server_sl_handshake_and_quarantine(self):
