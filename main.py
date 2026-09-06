@@ -255,8 +255,14 @@ async def run_live_bot():
 
             if is_active:
                 if is_mt5 and pos:
+                    if not engine.position_mgr.is_open:
+                        engine.position_mgr.open_position(pos["ticket"], pos["type"], pos["price_open"])
                     profit = pos["profit"]
-                    res = engine.handle_poc_update({"profit": profit, "status": "open"})
+                    res = engine.handle_poc_update({
+                        "contract_id": pos["ticket"],
+                        "profit": profit,
+                        "status": "open"
+                    })
                     if res.get("action") == "TRIGGER_MANUAL_SELL":
                         logger.info(f"[STEP-RATCHET STOP TRIGGERED] Closing MT5 position: {res['reason']}")
                         client.close_position(pos["ticket"])

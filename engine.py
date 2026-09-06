@@ -186,7 +186,7 @@ class AegisExecutionEngine:
             return {"action": "NONE"}
 
         contract_id = poc.get("contract_id")
-        if contract_id != self.position_mgr.active_contract_id:
+        if contract_id and self.position_mgr.active_contract_id and contract_id != self.position_mgr.active_contract_id:
             return {"action": "NONE"}
 
         is_sold = poc.get("is_sold") == 1
