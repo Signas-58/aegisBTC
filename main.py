@@ -263,16 +263,19 @@ async def run_live_bot():
                         "profit": profit,
                         "status": "open"
                     })
+                    current_floor = engine.position_mgr.current_sl_floor
                     if res.get("action") == "TRIGGER_MANUAL_SELL":
                         logger.info(f"[STEP-RATCHET STOP TRIGGERED] Closing MT5 position: {res['reason']}")
                         client.close_position(pos["ticket"])
                         engine._record_trade_result(profit)
                     else:
+                        # Dynamically shift MT5 server-side Stop Loss on terminal when floor updates
+                        client.modify_position_sl(pos["ticket"], current_floor)
                         peak = engine.position_mgr.peak_pnl
                         logger.info(
                             f"[ACTIVE TRADE TICK 1s] Ticket: #{pos['ticket']} | Type: {pos['type']} | "
                             f"Entry: ${pos['price_open']:.2f} | Current: ${pos['price_current']:.2f} | "
-                            f"PnL: ${profit:+.2f} | Peak PnL: ${peak:+.2f} | SL: ${pos['sl']:.2f}"
+                            f"PnL: ${profit:+.2f} | Peak PnL: ${peak:+.2f} | SL Floor: ${current_floor:+.2f} | Server SL: ${pos['sl']:.2f}"
                         )
             else:
                 if config.STRATEGY_MODE == "AEGIS_CLASSIC":

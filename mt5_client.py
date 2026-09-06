@@ -255,6 +255,51 @@ class MT5Client:
             "tp": pos.tp
         }
 
+    def modify_position_sl(self, ticket: int, sl_floor_usd: float) -> bool:
+        """
+        Dynamically modify/ratchet server-side Stop Loss price level on MetaTrader 5 terminal.
+        """
+        if not self.is_connected or mt5 is None:
+            return False
+
+        positions = mt5.positions_get(ticket=ticket)
+        if not positions:
+            return False
+
+        pos = positions[0]
+        entry_price = float(pos.price_open)
+        volume = float(pos.volume) if pos.volume > 0 else self.volume
+
+        # Convert USD SL floor into absolute price level based on position direction
+        price_offset = sl_floor_usd / volume
+        if pos.type == mt5.ORDER_TYPE_BUY:
+            new_sl = entry_price + price_offset
+        else:
+            new_sl = entry_price - price_offset
+
+        # Avoid redundant server calls if SL has not shifted (> $0.10 difference)
+        if abs(new_sl - pos.sl) < 0.10:
+            return True
+
+        request = {
+            "action": mt5.TRADE_ACTION_SLTP,
+            "position": pos.ticket,
+            "symbol": self.symbol,
+            "sl": round(new_sl, 2),
+            "tp": pos.tp
+        }
+
+        logger.info(f"Modifying MT5 Server SL for Ticket #{pos.ticket}: New SL = ${new_sl:.2f} (Floor: ${sl_floor_usd:+.2f})")
+        result = mt5.order_send(request)
+
+        if result and result.retcode in (mt5.TRADE_RETCODE_DONE, 10009):
+            logger.info(f"🎉 [MT5 SERVER SL UPDATED] Ticket #{pos.ticket} SL shifted to ${new_sl:.2f}")
+            return True
+        else:
+            err = result.comment if result else mt5.last_error()
+            logger.warning(f"Failed to update MT5 Server SL for Ticket #{pos.ticket}: {err}")
+            return False
+
     def close_position(self, ticket: Optional[int] = None) -> bool:
         """
         Close active market deal by ticket ID.
