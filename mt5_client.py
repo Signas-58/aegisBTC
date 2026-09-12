@@ -260,6 +260,49 @@ class MT5Client:
             "tp": pos.tp
         }
 
+    def get_closed_position_profit(self, ticket: Optional[int]) -> float:
+        """
+        Fetch realized PnL for a closed position ticket from MT5 deal history.
+        """
+        if not self.is_connected or mt5 is None or not ticket:
+            return -config.HARD_STOP_LOSS_USD
+
+        try:
+            import datetime
+            now = datetime.datetime.now()
+            from_time = now - datetime.timedelta(days=1)
+            to_time = now + datetime.timedelta(hours=1)
+
+            deals = mt5.history_deals_get(position=ticket)
+            if not deals:
+                deals = mt5.history_deals_get(from_time, to_time)
+
+            if deals:
+                total_pnl = 0.0
+                found = False
+                for deal in deals:
+                    pos_id = getattr(deal, 'position_id', None)
+                    if pos_id is None or pos_id == 0:
+                        pos_id = getattr(deal, 'position', None)
+                    if pos_id == ticket:
+                        found = True
+                        profit = getattr(deal, 'profit', 0.0)
+                        swap = getattr(deal, 'swap', 0.0)
+                        commission = getattr(deal, 'commission', 0.0)
+                        fee = getattr(deal, 'fee', 0.0)
+                        total_pnl += (profit + swap + commission + fee)
+
+                if found:
+                    logger.info(f"[MT5 HISTORY SYNC] Closed position #{ticket} deal found in history. Realized PnL: ${total_pnl:+.2f}")
+                    return round(total_pnl, 2)
+
+        except Exception as e:
+            logger.warning(f"[MT5 HISTORY SYNC] Exception querying history deals for ticket #{ticket}: {e}")
+
+        logger.warning(f"[MT5 HISTORY SYNC] Ticket #{ticket} not found in deal history. Defaulting to Hard SL (-${config.HARD_STOP_LOSS_USD:.2f}).")
+        return -config.HARD_STOP_LOSS_USD
+
+
     def modify_position_sl(self, ticket: int, sl_floor_usd: float) -> bool:
         """
         Dynamically modify/ratchet server-side Stop Loss price level on MetaTrader 5 terminal.

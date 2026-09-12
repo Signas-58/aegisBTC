@@ -164,6 +164,35 @@ class TestAegisBTC(unittest.TestCase):
         self.assertFalse(allowed)
         self.assertIn("Loss Quarantine active", reason)
 
+    def test_mt5_server_sl_sync_and_restart(self):
+        engine = AegisExecutionEngine()
+        # Simulate position opened on MT5
+        engine.position_mgr.open_position(505, config.CONTRACT_TYPE_UP, 65000.0)
+        self.assertTrue(engine.position_mgr.is_open)
+
+        # Simulate MT5 server closing position natively on SL (pos becomes None)
+        pos = None
+        is_active = pos is not None
+        if not is_active and engine.position_mgr.is_open:
+            engine.position_mgr.close_position()
+            engine._record_trade_result(-0.75, is_server_close=True)
+
+        # Verify position manager state is cleared
+        self.assertFalse(engine.position_mgr.is_open)
+
+        # Verify 10-minute loss quarantine is active
+        allowed, reason = engine.is_execution_allowed()
+        self.assertFalse(allowed)
+        self.assertIn("Loss Quarantine active", reason)
+
+        # Fast-forward time past quarantine expiry
+        engine.quarantine_until = time.time() - 1.0
+
+        # Verify engine re-enables trading after quarantine expires
+        allowed_after, reason_after = engine.is_execution_allowed()
+        self.assertTrue(allowed_after)
+        self.assertEqual(reason_after, "Ready")
+
 
 if __name__ == "__main__":
     unittest.main()

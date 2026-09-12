@@ -224,6 +224,14 @@ async def run_live_bot():
             if is_mt5:
                 pos = client.get_open_position()
                 is_active = pos is not None
+                # State Synchronization Check: If MT5 has no open position, but engine state is marked as open,
+                # the position was closed on broker server (e.g. hit SL/TP or manual close).
+                if not is_active and engine.position_mgr.is_open:
+                    closed_ticket = engine.position_mgr.active_contract_id
+                    realized_pnl = client.get_closed_position_profit(closed_ticket) if closed_ticket else -config.HARD_STOP_LOSS_USD
+                    logger.info(f"[MT5 SERVER CLOSE DETECTED] Position #{closed_ticket} closed on broker server. Realized PnL: ${realized_pnl:+.2f}")
+                    engine.position_mgr.close_position()
+                    engine._record_trade_result(realized_pnl, is_server_close=True)
             else:
                 is_active = engine.position_mgr.is_open
 
@@ -267,6 +275,7 @@ async def run_live_bot():
                     if res.get("action") == "TRIGGER_MANUAL_SELL":
                         logger.info(f"[STEP-RATCHET STOP TRIGGERED] Closing MT5 position: {res['reason']}")
                         client.close_position(pos["ticket"])
+                        engine.position_mgr.close_position()
                         engine._record_trade_result(profit)
                     else:
                         # Dynamically shift MT5 server-side Stop Loss on terminal when floor updates
