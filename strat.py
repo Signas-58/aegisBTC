@@ -45,21 +45,21 @@ def detect_3m_fvg(
     atr_3m: float = 0.0
 ) -> Tuple[bool, float]:
     """
-    Detect 3-minute Fair Value Gap (FVG) imbalance formation:
+    Detect 3-minute Fair Value Gap (FVG) imbalance formation strictly on closed candles:
     - Bullish 3m FVG: 3m_Low[i] > 3m_High[i-2] with displacement candle at i-1.
     - Bearish 3m FVG: 3m_High[i] < 3m_Low[i-2] with displacement candle at i-1.
     Returns (has_fvg, gap_size).
     """
-    if not candles_3m or len(candles_3m) < 3:
+    if not candles_3m or len(candles_3m) < 4:
         return False, 0.0
 
     current_price = candles_3m[-1]['close']
     min_gap_size = atr_3m * config.FVG_MIN_ATR_RATIO if atr_3m > 0 else 0.0
 
-    # Scan recent candles for active / retesting FVG zone
-    lookback = min(5, len(candles_3m) - 2)
+    # Scan recent closed candles (ending at index [-2]) for active / retesting FVG zone
+    lookback = min(6, len(candles_3m) - 2)
     
-    for idx in range(len(candles_3m) - 1, len(candles_3m) - 1 - lookback, -1):
+    for idx in range(len(candles_3m) - 2, len(candles_3m) - 2 - lookback, -1):
         if idx < 2:
             break
             
@@ -67,14 +67,15 @@ def detect_3m_fvg(
         c_disp = candles_3m[idx - 1]
         c_curr = candles_3m[idx]
 
-        if direction == config.CONTRACT_TYPE_UP:
+        is_up = direction in (config.CONTRACT_TYPE_UP, "BUY", "MULTUP")
+        if is_up:
             if c_curr['low'] > c_prev2['high']:
                 gap_size = c_curr['low'] - c_prev2['high']
                 if c_disp['close'] > c_disp['open'] and gap_size >= min_gap_size:
                     if current_price >= c_prev2['high']:
                         return True, gap_size
 
-        elif direction == config.CONTRACT_TYPE_DOWN:
+        else:
             if c_curr['high'] < c_prev2['low']:
                 gap_size = c_prev2['low'] - c_curr['high']
                 if c_disp['close'] < c_disp['open'] and gap_size >= min_gap_size:
@@ -214,18 +215,34 @@ def analyze_market_and_generate_signal(
     _, atr_3m_list = calculate_tr_and_atr(candles_3m, 14)
     atr_3m = atr_3m_list[-1] if atr_3m_list else atr_5m
 
-    # 4. 1m Trigger Analysis
+    # 4. 1m Trigger Analysis - Strictly evaluated on closed candle [-2]
     closes_1m = [c['close'] for c in candles_1m]
+    ema_fast_list = calculate_ema(closes_1m, getattr(config, "EMA_FAST", 8))
+    ema_slow_list = calculate_ema(closes_1m, getattr(config, "EMA_SLOW", 21))
     ema_20_1m_list = calculate_ema(closes_1m, 20)
-    ema_20_1m = ema_20_1m_list[-1]
     rsi_14_1m_list = calculate_rsi(closes_1m, 14)
-    rsi_14_1m = rsi_14_1m_list[-1]
-    close_1m = closes_1m[-1]
 
-    # Evaluate potential signals for MULTUP and MULTDOWN
+    # Completed candle [-2] metrics
+    closed_close_1m = closes_1m[-2] if len(closes_1m) >= 2 else closes_1m[-1]
+    ema_fast_1m = ema_fast_list[-2] if len(ema_fast_list) >= 2 else ema_fast_list[-1]
+    ema_slow_1m = ema_slow_list[-2] if len(ema_slow_list) >= 2 else ema_slow_list[-1]
+    ema_20_1m = ema_20_1m_list[-2] if len(ema_20_1m_list) >= 2 else ema_20_1m_list[-1]
+    rsi_14_1m = rsi_14_1m_list[-2] if len(rsi_14_1m_list) >= 2 else rsi_14_1m_list[-1]
+
+    # 1m ADX Acceleration across last 3 closed candles (ADX[-2] > ADX[-3] > ADX[-4])
+    adx_1m_list, _, _ = calculate_adx(candles_1m, 14)
+    adx_accel = False
+    if len(adx_1m_list) >= 4:
+        adx_accel = (adx_1m_list[-2] >= getattr(config, "ADX_MIN_THRESHOLD", 22.0)) and \
+                    (adx_1m_list[-2] > adx_1m_list[-3] > adx_1m_list[-4])
+
+    # Evaluate potential signals for BUY and SELL
     potential_signals = []
-    
-    for candidate_dir in [config.CONTRACT_TYPE_UP, config.CONTRACT_TYPE_DOWN]:
+    candidate_dirs = [config.CONTRACT_TYPE_UP, config.CONTRACT_TYPE_DOWN]
+    if "BUY" not in candidate_dirs:
+        candidate_dirs.extend(["BUY", "SELL"])
+
+    for candidate_dir in set(candidate_dirs):
         allowed, clearance_atr = check_dynamic_proximity_guard(
             current_price, htf_resistance, htf_support, atr_5m, candidate_dir
         )
@@ -237,7 +254,7 @@ def analyze_market_and_generate_signal(
 
         score, breakdown = calculate_intelligence_score(
             direction=candidate_dir,
-            current_price=current_price,
+            current_price=closed_close_1m,
             ema_200_15m=ema_200_15m,
             regime=regime,
             adx_5m=adx_5m,
@@ -246,10 +263,13 @@ def analyze_market_and_generate_signal(
             has_fvg=has_fvg,
             in_silver_bullet=in_sb,
             key_level_clearance_atr=clearance_atr,
-            close_1m=close_1m,
+            close_1m=closed_close_1m,
             ema_20_1m=ema_20_1m,
             rsi_14_1m=rsi_14_1m,
-            strategy_mode=mode
+            strategy_mode=mode,
+            ema_fast_1m=ema_fast_1m,
+            ema_slow_1m=ema_slow_1m,
+            adx_accel=adx_accel
         )
         
         if score >= config.MIN_CONFIDENCE_SCORE:
@@ -257,7 +277,7 @@ def analyze_market_and_generate_signal(
                 "signal": candidate_dir,
                 "confidence_score": score,
                 "breakdown": breakdown,
-                "reason": f"[{mode}] MTF Score {score}% >= {config.MIN_CONFIDENCE_SCORE}% ({candidate_dir})"
+                "reason": f"[{mode}] MTF Confluence Score {score}% >= {config.MIN_CONFIDENCE_SCORE}% ({candidate_dir})"
             })
 
     if not potential_signals:

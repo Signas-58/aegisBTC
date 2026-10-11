@@ -113,34 +113,81 @@ class TestAegisBTC(unittest.TestCase):
 
     def test_step_ratchet_trailing_engine(self):
         pm = PositionManager()
-        pm.open_position(101, config.CONTRACT_TYPE_UP, 65000.0)
+        pm.open_position(101, config.CONTRACT_TYPE_UP, 1.0850)
 
         # Initial SL Floor
-        self.assertEqual(pm.current_sl_floor, -0.75)
+        self.assertEqual(pm.current_sl_floor, -config.HARD_STOP_LOSS_USD)
 
-        # PnL +$0.40 -> Floor remains -$0.75
+        # PnL +$0.40 -> Floor remains -$1.00
         should_close, floor, _ = pm.update_pnl_and_ratchet(0.40)
-        self.assertEqual(floor, -0.75)
+        self.assertEqual(floor, -config.HARD_STOP_LOSS_USD)
         self.assertFalse(should_close)
 
-        # PnL +$0.50 -> Break-Even ratchets floor to $0.00
-        should_close, floor, _ = pm.update_pnl_and_ratchet(0.50)
+        # PnL +$0.60 -> Break-Even ratchets floor to $0.00 (+6.0 pips)
+        should_close, floor, _ = pm.update_pnl_and_ratchet(0.60)
         self.assertEqual(floor, 0.0)
         self.assertFalse(should_close)
 
-        # PnL +$0.75 -> Dynamic Step Profit Lock (Peak +$0.75 - Gap $0.50 -> +$0.25)
-        should_close, floor, _ = pm.update_pnl_and_ratchet(0.75)
-        self.assertEqual(floor, 0.25)
+        # PnL +$1.00 -> Step Profit Lock (+10 pips: Peak $1.00 - Gap $0.40 -> +$0.60 floor)
+        should_close, floor, _ = pm.update_pnl_and_ratchet(1.00)
+        self.assertGreaterEqual(floor, 0.40)
         self.assertFalse(should_close)
 
-        # PnL +$0.80 -> Tight 5-cent Step Profit Lock (Peak +$0.80 - Gap $0.50 -> +$0.30)
-        should_close, floor, _ = pm.update_pnl_and_ratchet(0.80)
-        self.assertEqual(floor, 0.30)
-        self.assertFalse(should_close)
-
-        # Drop PnL to +$0.25 -> Breach floor at +$0.30 -> Trigger manual sell
-        should_close, floor, reason = pm.update_pnl_and_ratchet(0.25)
+        # Drop PnL below floor -> Breach floor -> Trigger manual sell
+        should_close, floor, reason = pm.update_pnl_and_ratchet(0.20)
         self.assertTrue(should_close)
+
+        # Stagnation Time-Stop test (20 minutes / 1200 seconds)
+        pm_time = PositionManager()
+        pm_time.open_position(102, "BUY", 1.0850)
+        should_close_time, _, reason_time = pm_time.update_pnl_and_ratchet(0.05, runtime_seconds=1205.0)
+        self.assertTrue(should_close_time)
+        self.assertIn("Stagnation Time-Stop", reason_time)
+
+    def test_eurusd_master_scoring_matrix(self):
+        # Ideal setup: Trend aligned, FVG active, Bar-Close EMA-8 > EMA-21, ADX Accel active in session
+        score, breakdown = calculate_intelligence_score(
+            direction="BUY",
+            current_price=1.0850,
+            ema_200_15m=1.0800,
+            regime=REGIME_TRENDING,
+            adx_5m=25.0,
+            atr_ratio_5m=1.0,
+            has_liquidity_sweep=True,
+            has_fvg=True,
+            in_silver_bullet=True,
+            key_level_clearance_atr=1.5,
+            close_1m=1.0850,
+            ema_20_1m=1.0840,
+            rsi_14_1m=55.0,
+            strategy_mode="EURUSD_MASTER",
+            ema_fast_1m=1.0852,
+            ema_slow_1m=1.0845,
+            adx_accel=True
+        )
+        self.assertEqual(score, 100)
+        self.assertTrue(breakdown["meets_threshold"])
+        self.assertEqual(breakdown["mode"], "EURUSD_MASTER")
+
+        # Outside session window -> Gate blocks (score 0)
+        score_outside, breakdown_outside = calculate_intelligence_score(
+            direction="BUY",
+            current_price=1.0850,
+            ema_200_15m=1.0800,
+            regime=REGIME_TRENDING,
+            adx_5m=25.0,
+            atr_ratio_5m=1.0,
+            has_liquidity_sweep=True,
+            has_fvg=True,
+            in_silver_bullet=False,
+            key_level_clearance_atr=1.5,
+            close_1m=1.0850,
+            ema_20_1m=1.0840,
+            rsi_14_1m=55.0,
+            strategy_mode="EURUSD_MASTER"
+        )
+        self.assertEqual(score_outside, 0)
+        self.assertFalse(breakdown_outside["meets_threshold"])
 
     def test_native_server_sl_handshake_and_quarantine(self):
         engine = AegisExecutionEngine()

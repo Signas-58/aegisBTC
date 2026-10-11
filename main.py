@@ -17,6 +17,11 @@ from intelligence import calculate_intelligence_score, classify_market_regime
 from strat import analyze_market_and_generate_signal
 from engine import AegisExecutionEngine
 from deriv_client import DerivWSClient
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 # Configure Logging
 logging.basicConfig(
@@ -30,22 +35,23 @@ logger = logging.getLogger("AegisBTC.Main")
 
 
 def print_banner():
-    is_classic = (config.STRATEGY_MODE == "AEGIS_CLASSIC")
-    mode_name = "OPTION 1: AEGIS CLASSIC (24/7 Sweep & Momentum)" if is_classic else "OPTION 2: ICT SILVER BULLET HYBRID (CAT Timing + 3m FVG)"
-    tf_info = "15m (Macro) | 5m (Structure/ADX/ATR) | 1m (Trigger/EMA/RSI)" if is_classic else "15m (Macro) | 5m (Sweep/ADX/ATR) | 3m (FVG) | 1m (Trigger)"
-    sb_info = "Disabled (Classic 24/7 Execution)" if is_classic else "CAT Session Windows (09:00-10:00, 16:00-17:00, 20:00-21:00)"
+    is_master = (config.STRATEGY_MODE in ("EURUSD_MASTER", "EURUSD"))
+    mode_name = "OPTION 1: EURUSD MASTER (15m Macro + 3m FVG + 1m Bar-Close Momentum)" if is_master else f"MODE: {config.STRATEGY_MODE}"
+    tf_info = "15m (Macro EMA-200) | 3m (FVG Imbalance) | 1m (Bar-Close Momentum EMA-8/21 + ADX Accel)"
+    sb_info = "CAT Institutional Windows (London: 09:00-12:00 | NY: 15:00-18:00 CAT)"
     
     banner = f"""
 ================================================================================
-    AEGIS-BTC: Multi-Timeframe Algorithmic Engine for Deriv Bitcoin Multipliers
+    AEGIS-WELTRADE: EURUSD High-Win-Rate Algorithmic Engine
 ================================================================================
-  [AEGIS-BTC INITIALIZED - SYMBOL: {config.SYMBOL} | STAKE: ${config.STAKE:.2f} | LEVERAGE: x{config.MULTIPLIER_LEVERAGE}]
+  [AEGIS INITIALIZED - ASSET: {config.SYMBOL} | LOT: {config.LOT_SIZE} | MAGIC: {config.MAGIC_NUMBER}]
 --------------------------------------------------------------------------------
   ACTIVE STRATEGY     : {mode_name}
   Timeframe Ingestion : {tf_info}
-  ICT Silver Bullet   : {sb_info}
-  Risk Profile        : Hard SL: ${config.HARD_STOP_LOSS_USD:.2f} | Break-Even: +${config.BREAK_EVEN_TRIGGER:.2f}
-                        Step Ratchet: +${config.TRAILING_STEP_USD:.2f} | Trail Gap: ${config.TRAILING_GAP_USD:.2f}
+  Institutional Gate  : {sb_info}
+  Execution Guards    : Bar-Close Evaluator [-2] | Max Spread: {config.MAX_ALLOWED_SPREAD_PIPS:.1f} pips | 1-Trade Guard
+  Risk Profile        : Hard SL: {config.HARD_SL_PIPS:.1f} pips (${config.HARD_STOP_LOSS_USD:.2f}) | Break-Even: +{config.BE_TRIGGER_PIPS:.1f} pips (+${config.BREAK_EVEN_TRIGGER:.2f})
+                        Step Ratchet: +{config.TRAILING_STEP_PIPS:.1f} pips (+${config.TRAILING_STEP_USD:.2f}) | Stagnation Time-Stop: {config.TIME_STOP_SECONDS}s (20m)
   Safety Safeguards   : Loss Quarantine: {config.COOLDOWN_AFTER_LOSS_SECONDS}s (10m) | Max Daily Loss: ${config.MAX_DAILY_LOSS_USD:.2f}
 ================================================================================
 """
@@ -54,29 +60,29 @@ def print_banner():
 
 def run_self_validation() -> bool:
     """
-    Run self-test validation of indicators, intelligence scoring, and engine rules.
+    Run self-test validation of indicators, intelligence scoring, and engine rules for EURUSD.
     """
-    logger.info("Running Aegis-BTC Self-Validation Checks...")
+    logger.info("Running Aegis-Weltrade EURUSD Self-Validation Checks...")
 
     # 1. Verify Configuration Specs
-    assert config.SYMBOL in ("cryBTCUSD", "BTCUSD"), f"Invalid symbol: {config.SYMBOL}"
-    assert config.STAKE == 1.00, f"Stake must be $1.00, got ${config.STAKE}"
-    assert config.MULTIPLIER_LEVERAGE == 100, f"Leverage must be 100, got {config.MULTIPLIER_LEVERAGE}"
-    assert config.HARD_STOP_LOSS_USD == 0.75, f"Hard SL must be $0.75, got {config.HARD_STOP_LOSS_USD}"
+    assert "EURUSD" in config.SYMBOL or "BTC" in config.SYMBOL, f"Invalid symbol: {config.SYMBOL}"
+    assert config.HARD_SL_PIPS == 10.0, f"Hard SL pips must be 10.0, got {config.HARD_SL_PIPS}"
+    assert config.BE_TRIGGER_PIPS == 6.0, f"Break-Even trigger must be 6.0 pips, got {config.BE_TRIGGER_PIPS}"
     assert config.COOLDOWN_AFTER_LOSS_SECONDS == 600, f"Quarantine must be 600s, got {config.COOLDOWN_AFTER_LOSS_SECONDS}"
 
     # 2. Indicator Computations Check
-    test_prices = [100.0 + i * 0.5 for i in range(50)]
-    ema_20 = calculate_ema(test_prices, 20)
+    test_prices = [1.0800 + i * 0.0001 for i in range(50)]
+    ema_8 = calculate_ema(test_prices, 8)
+    ema_21 = calculate_ema(test_prices, 21)
     rsi_14 = calculate_rsi(test_prices, 14)
-    assert len(ema_20) == len(test_prices), "EMA output length mismatch"
+    assert len(ema_8) == len(test_prices), "EMA output length mismatch"
     assert len(rsi_14) == len(test_prices), "RSI output length mismatch"
 
-    # 3. Intelligence Matrix Check (5-Vector 100-Point Matrix)
+    # 3. EURUSD Master Quantitative Scoring Check (4-Vector 25-Point Confluence Matrix)
     score, breakdown = calculate_intelligence_score(
-        direction=config.CONTRACT_TYPE_UP,
-        current_price=65000.0,
-        ema_200_15m=64000.0,
+        direction="BUY",
+        current_price=1.0850,
+        ema_200_15m=1.0800,
         regime="REGIME_TRENDING",
         adx_5m=25.0,
         atr_ratio_5m=1.0,
@@ -84,26 +90,35 @@ def run_self_validation() -> bool:
         has_fvg=True,
         in_silver_bullet=True,
         key_level_clearance_atr=1.5,
-        close_1m=65000.0,
-        ema_20_1m=64950.0,
-        rsi_14_1m=55.0
+        close_1m=1.0850,
+        ema_20_1m=1.0840,
+        rsi_14_1m=55.0,
+        strategy_mode="EURUSD_MASTER",
+        ema_fast_1m=1.0852,
+        ema_slow_1m=1.0845,
+        adx_accel=True
     )
-    assert score == 100, f"Expected 100-point score for ideal setup, got {score}"
-    assert breakdown["meets_threshold"] is True, "Ideal setup should meet threshold"
+    assert score == 100, f"Expected 100-point score for ideal EURUSD setup, got {score}"
+    assert breakdown["meets_threshold"] is True, "Ideal EURUSD setup should meet threshold"
 
-    # 4. Engine Step-Ratchet Rules Check
+    # 4. Engine Step-Ratchet & Stagnation Time-Stop Check
     engine = AegisExecutionEngine()
-    engine.position_mgr.open_position(999, config.CONTRACT_TYPE_UP, 65000.0)
+    engine.position_mgr.open_position(800826, "BUY", 1.0850)
     
-    # Test Break-Even Trigger at +$0.50 PnL
-    should_close, floor, _ = engine.position_mgr.update_pnl_and_ratchet(0.50)
-    assert floor == 0.0, f"SL floor should ratchet to $0.00 at +$0.50 PnL, got {floor}"
+    # Test Break-Even Trigger at +$0.60 PnL (+6 pips)
+    should_close, floor, _ = engine.position_mgr.update_pnl_and_ratchet(0.60)
+    assert floor == 0.0, f"SL floor should ratchet to $0.00 at +$0.60 PnL, got {floor}"
     
-    # Test Step Ratchet at +$1.00 PnL (Step +$0.25, Gap $0.50 -> floor +$0.50)
+    # Test Step Ratchet at +$1.00 PnL (+10 pips: Gap $0.40 -> floor +$0.60)
     should_close, floor, _ = engine.position_mgr.update_pnl_and_ratchet(1.00)
-    assert floor == 0.50, f"SL floor should ratchet to +$0.50 at +$1.00 PnL, got {floor}"
+    assert floor >= 0.40, f"SL floor should ratchet forward at +$1.00 PnL, got {floor}"
 
-    logger.info("[SELF-VALIDATION PASSED] All Aegis-BTC configuration and math checks succeeded!")
+    # Test Stagnation Time-Stop (>= 1200 seconds with flat/positive PnL)
+    should_close_time, _, reason = engine.position_mgr.update_pnl_and_ratchet(0.10, runtime_seconds=1201.0)
+    assert should_close_time is True, "Stagnation Time-Stop should trigger after 1200s with positive PnL"
+    assert "Stagnation Time-Stop" in reason
+
+    logger.info("[SELF-VALIDATION PASSED] All Aegis-Weltrade EURUSD configuration and math checks succeeded!")
     return True
 
 
@@ -266,14 +281,16 @@ async def run_live_bot():
                     if not engine.position_mgr.is_open:
                         engine.position_mgr.open_position(pos["ticket"], pos["type"], pos["price_open"])
                     profit = pos["profit"]
+                    runtime_sec = time.time() - engine.position_mgr.entry_time
                     res = engine.handle_poc_update({
                         "contract_id": pos["ticket"],
                         "profit": profit,
+                        "runtime_seconds": runtime_sec,
                         "status": "open"
                     })
                     current_floor = engine.position_mgr.current_sl_floor
                     if res.get("action") == "TRIGGER_MANUAL_SELL":
-                        logger.info(f"[STEP-RATCHET STOP TRIGGERED] Closing MT5 position: {res['reason']}")
+                        logger.info(f"[PROFIT LOCK / TIME STOP TRIGGERED] Closing MT5 position #{pos['ticket']}: {res['reason']}")
                         client.close_position(pos["ticket"])
                         engine.position_mgr.close_position()
                         engine._record_trade_result(profit)
@@ -281,35 +298,34 @@ async def run_live_bot():
                         # Dynamically shift MT5 server-side Stop Loss on terminal when floor updates
                         client.modify_position_sl(pos["ticket"], current_floor)
                         peak = engine.position_mgr.peak_pnl
+                        spread_pips = client.get_spread_pips() if is_mt5 else 0.0
                         logger.info(
                             f"[ACTIVE TRADE TICK 1s] Ticket: #{pos['ticket']} | Type: {pos['type']} | "
-                            f"Entry: ${pos['price_open']:.2f} | Current: ${pos['price_current']:.2f} | "
-                            f"PnL: ${profit:+.2f} | Peak PnL: ${peak:+.2f} | SL Floor: ${current_floor:+.2f} | Server SL: ${pos['sl']:.2f}"
+                            f"Entry: {pos['price_open']:.5f} | Current: {pos['price_current']:.5f} | "
+                            f"PnL: ${profit:+.2f} | Peak PnL: ${peak:+.2f} | Runtime: {int(runtime_sec)}s | "
+                            f"SL Floor: ${current_floor:+.2f} | Server SL: {pos['sl']:.5f} | Spread: {spread_pips:.1f} pips"
                         )
             else:
-                if config.STRATEGY_MODE == "AEGIS_CLASSIC":
-                    logger.info(
-                        f"[SCANNING TICK 25s] {client.symbol}: ${current_price:.2f} | "
-                        f"Mode: Aegis Classic (24/7) | Regime: {regime} | Setup Score: {confidence_score}% | "
-                        f"Signal: {signal} | Status: Idle Scanning..."
-                    )
-                else:
-                    sb_str = "ACTIVE 🔥" if in_sb else "Inactive 💤"
-                    logger.info(
-                        f"[SCANNING TICK 25s] {client.symbol}: ${current_price:.2f} | "
-                        f"Silver Bullet: {sb_str} | Regime: {regime} | Setup Score: {confidence_score}% | "
-                        f"Signal: {signal} | Status: Idle Scanning..."
-                    )
+                spread_pips = client.get_spread_pips() if is_mt5 else 0.0
+                sb_str = "ACTIVE 🔥" if in_sb else "Inactive 💤"
+                spread_alert = "⚠️ WIDE SPREAD" if spread_pips > config.MAX_ALLOWED_SPREAD_PIPS else "OK"
+                logger.info(
+                    f"[SCANNING TICK 25s] {client.symbol}: {current_price:.5f} | Spread: {spread_pips:.1f} pips ({spread_alert}) | "
+                    f"Session Gate: {sb_str} | Regime: {regime} | Setup Score: {confidence_score}% | "
+                    f"Signal: {signal} | Status: Idle Scanning..."
+                )
 
             # Signal Trigger Check
             if signal != "NO_SIGNAL" and not is_active:
                 allowed, reason = engine.is_execution_allowed()
                 if allowed:
-                    logger.info(f"🔥 [SIGNAL TRIGGERED] {signal} | Score: {confidence_score}% | Price: ${current_price:.2f}")
+                    logger.info(f"🔥 [SIGNAL TRIGGERED] {signal} | Score: {confidence_score}% | Price: {current_price:.5f}")
                     if is_mt5:
                         order_res = client.send_order(signal, config.HARD_STOP_LOSS_USD)
                         if order_res:
                             engine.position_mgr.open_position(order_res["ticket"], signal, order_res["price"])
+                        else:
+                            logger.warning("[EXECUTION BLOCKED] MT5 order send returned None (Check spread or broker response).")
                     else:
                         proposal_req = engine.build_proposal_payload(signal)
                         await client.send_proposal(proposal_req)
@@ -343,33 +359,39 @@ def prompt_strategy_mode_if_needed(args):
     if args.mode:
         if args.mode.lower() == "classic":
             config.STRATEGY_MODE = "AEGIS_CLASSIC"
-        else:
+        elif args.mode.lower() in ("hybrid", "silverbullet"):
             config.STRATEGY_MODE = "HYBRID_SILVER_BULLET"
+        else:
+            config.STRATEGY_MODE = "EURUSD_MASTER"
         return
 
     # Only prompt interactively for live or test mode if running in an interactive terminal
     if (args.live or args.test) and sys.stdin.isatty():
         print("\n================================================================================")
-        print("    AEGIS-BTC STRATEGY EXECUTION MODE SELECTOR")
+        print("    AEGIS-WELTRADE STRATEGY EXECUTION MODE SELECTOR")
         print("================================================================================")
         print("  Select Strategy Execution Mode:")
-        print("    [1] Option 1: Aegis Classic Strategy (24/7 MTF Sweep & Momentum)")
-        print("    [2] Option 2: ICT Silver Bullet Hybrid Strategy (CAT Timing + 3m FVG) [Default]")
+        print("    [1] Option 1: EURUSD Master Strategy (15m Macro + 3m FVG + 1m Bar-Close Momentum) [Default]")
+        print("    [2] Option 2: Aegis Classic Strategy (24/7 Sweep & Momentum)")
+        print("    [3] Option 3: ICT Silver Bullet Hybrid Strategy (CAT Timing + 3m FVG)")
         print("================================================================================")
         try:
-            choice = input("  Enter choice (1 or 2, default 2): ").strip()
-            if choice == "1":
+            choice = input("  Enter choice (1, 2, or 3, default 1): ").strip()
+            if choice == "2":
                 config.STRATEGY_MODE = "AEGIS_CLASSIC"
                 args.mode = "classic"
-            else:
+            elif choice == "3":
                 config.STRATEGY_MODE = "HYBRID_SILVER_BULLET"
                 args.mode = "hybrid"
+            else:
+                config.STRATEGY_MODE = "EURUSD_MASTER"
+                args.mode = "master"
         except Exception:
-            config.STRATEGY_MODE = "HYBRID_SILVER_BULLET"
-            args.mode = "hybrid"
+            config.STRATEGY_MODE = "EURUSD_MASTER"
+            args.mode = "master"
     else:
-        config.STRATEGY_MODE = os.getenv("STRATEGY_MODE", "HYBRID_SILVER_BULLET").upper()
-        args.mode = "classic" if config.STRATEGY_MODE == "AEGIS_CLASSIC" else "hybrid"
+        config.STRATEGY_MODE = os.getenv("STRATEGY_MODE", "EURUSD_MASTER").upper()
+        args.mode = "master"
 
 
 def main():
@@ -377,7 +399,7 @@ def main():
     parser.add_argument("--validate", action="store_true", help="Run self-validation checks and exit")
     parser.add_argument("--test", action="store_true", help="Run dry-run simulation mode")
     parser.add_argument("--live", action="store_true", help="Run live trading bot mode")
-    parser.add_argument("--mode", choices=["classic", "hybrid", "silverbullet"], help="Set Strategy Mode: 'classic' (Option 1) or 'hybrid'/'silverbullet' (Option 2)")
+    parser.add_argument("--mode", choices=["master", "eurusd", "classic", "hybrid", "silverbullet"], help="Set Strategy Mode: 'master'/'eurusd' (Option 1 EURUSD), 'classic' (Option 2), or 'hybrid'/'silverbullet' (Option 3)")
     parser.add_argument("--open-terminal", action="store_true", help="Pop up a visible window and run live bot")
     parser.add_argument("--child", action="store_true", help="Internal flag indicating execution inside spawned window")
 

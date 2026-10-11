@@ -39,18 +39,82 @@ def calculate_intelligence_score(
     close_1m: float,
     ema_20_1m: float,
     rsi_14_1m: float,
-    strategy_mode: str = None
+    strategy_mode: str = None,
+    ema_fast_1m: float = None,
+    ema_slow_1m: float = None,
+    adx_accel: bool = False
 ) -> Tuple[int, Dict[str, Any]]:
     """
-    Computes 100-Point Confluence Score for Aegis-BTC.
-    Supports Dual Strategy Modes:
+    Computes 100-Point Confluence Score for Aegis Trading Engine.
+    Supports Modes:
+    - "EURUSD_MASTER": 4-Vector 25-Point Matrix (Macro Trend, 3m FVG, 1m Bar-Close Momentum, 1m ADX Accel)
     - "AEGIS_CLASSIC": 4-Vector Matrix (Macro, Regime, Liquidity, Trigger - 25 Pts each)
     - "HYBRID_SILVER_BULLET": 5-Vector Matrix (Macro, Regime, Sweep+FVG, Silver Bullet, Trigger)
     """
-    if direction not in (config.CONTRACT_TYPE_UP, config.CONTRACT_TYPE_DOWN):
+    if direction not in (config.CONTRACT_TYPE_UP, config.CONTRACT_TYPE_DOWN, "BUY", "SELL", "MULTUP", "MULTDOWN"):
         return 0, {"error": "Invalid direction"}
 
     mode = (strategy_mode or config.STRATEGY_MODE).upper()
+    is_up = direction in (config.CONTRACT_TYPE_UP, "BUY", "MULTUP")
+
+    # --- OPTION 3: EURUSD MASTER HIGH-WIN-RATE ENGINE ---
+    if mode in ("EURUSD_MASTER", "EURUSD", "DEFAULT"):
+        # 1. Session Gate (Pass/Fail)
+        if config.STRICT_SILVER_BULLET_GATE and not in_silver_bullet:
+            return 0, {
+                "mode": "EURUSD_MASTER",
+                "macro_trend": 0,
+                "fvg_imbalance": 0,
+                "bar_close_momentum": 0,
+                "adx_acceleration": 0,
+                "total_score": 0,
+                "in_silver_bullet": False,
+                "meets_threshold": False,
+                "gate_reason": "STRICT_SILVER_BULLET_GATE: Outside London (09-12 CAT) or NY (15-18 CAT) window"
+            }
+
+        score_macro = 0
+        score_fvg = 0
+        score_momentum = 0
+        score_adx = 0
+
+        # 1. Macro Trend Alignment (25 Pts)
+        if is_up and current_price > ema_200_15m:
+            score_macro = 25
+        elif not is_up and current_price < ema_200_15m:
+            score_macro = 25
+
+        # 2. 3-Minute Fair Value Gap (25 Pts)
+        if has_fvg:
+            score_fvg = 25
+
+        # 3. 1-Minute Bar-Close Momentum (25 Pts) - EMA-8 vs EMA-21 on closed bar
+        fast = ema_fast_1m if ema_fast_1m is not None else close_1m
+        slow = ema_slow_1m if ema_slow_1m is not None else ema_20_1m
+        if is_up and fast > slow:
+            score_momentum = 25
+        elif not is_up and fast < slow:
+            score_momentum = 25
+
+        # 4. ADX Acceleration (25 Pts) - ADX >= 22 with positive slope across last 3 closed candles
+        if adx_accel:
+            score_adx = 25
+        elif adx_5m >= config.ADX_MIN_THRESHOLD:
+            score_adx = 15
+
+        total_score = score_macro + score_fvg + score_momentum + score_adx
+
+        breakdown = {
+            "mode": "EURUSD_MASTER",
+            "macro_trend": score_macro,
+            "fvg_imbalance": score_fvg,
+            "bar_close_momentum": score_momentum,
+            "adx_acceleration": score_adx,
+            "total_score": total_score,
+            "in_silver_bullet": in_silver_bullet,
+            "meets_threshold": total_score >= config.MIN_CONFIDENCE_SCORE
+        }
+        return total_score, breakdown
 
     # --- OPTION 1: AEGIS CLASSIC MODE ---
     if mode == "AEGIS_CLASSIC":

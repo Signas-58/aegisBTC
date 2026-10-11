@@ -101,17 +101,36 @@ class MT5Client:
 
     def _resolve_symbol_variant(self) -> bool:
         """
-        Auto-detect symbol variants if symbol differs (e.g. BTCUSD, BTCUSD.a, cryBTCUSD).
+        Auto-detect symbol variants if symbol differs (e.g. EURUSD, EURUSD.w, EURUSD_pro, BTCUSD).
         """
         symbols = mt5.symbols_get()
         if not symbols:
             return False
+        target = self.symbol.upper()
         for s in symbols:
-            if "BTCUSD" in s.name.upper() or "BITCOIN" in s.name.upper():
+            name_upper = s.name.upper()
+            if target in name_upper:
                 logger.info(f"Matched symbol variant: '{s.name}' for trading.")
                 self.symbol = s.name
                 return mt5.symbol_select(self.symbol, True)
         return False
+
+    def get_spread_pips(self) -> float:
+        """
+        Calculate real-time bid-ask spread in pips.
+        On 5-digit Forex (EURUSD): 1 pip = 10 * point = 0.00010.
+        """
+        if not self.is_connected or mt5 is None:
+            return 999.0
+        tick = mt5.symbol_info_tick(self.symbol)
+        sym_info = mt5.symbol_info(self.symbol)
+        if not tick or not sym_info:
+            return 999.0
+        point = sym_info.point if sym_info and sym_info.point > 0 else 0.00001
+        digits = sym_info.digits if sym_info else 5
+        pip_factor = 10.0 if digits in (3, 5) else 1.0
+        spread_points = (tick.ask - tick.bid) / point
+        return round(spread_points / pip_factor, 2)
 
     def fetch_mtf_candles(self) -> bool:
         """
@@ -168,39 +187,53 @@ class MT5Client:
 
     def send_order(self, signal_type: str, stop_loss_usd: float = config.HARD_STOP_LOSS_USD) -> Optional[Dict[str, Any]]:
         """
-        Execute instant market ORDER_TYPE_BUY or ORDER_TYPE_SELL with explicit SL.
+        Execute instant market ORDER_TYPE_BUY or ORDER_TYPE_SELL with explicit SL and spread guard.
         """
         if not self.is_connected or mt5 is None:
             logger.error("Cannot send MT5 order: Not connected.")
             return None
 
-        tick = mt5.symbol_info_tick(self.symbol)
-        if not tick:
-            logger.error(f"Cannot fetch tick info for {self.symbol}.")
+        # 1. Spread Guard Check
+        spread_pips = self.get_spread_pips()
+        if spread_pips > config.MAX_ALLOWED_SPREAD_PIPS:
+            logger.warning(
+                f"[SPREAD GUARD] Order execution blocked: Current spread {spread_pips:.2f} pips "
+                f"exceeds maximum allowed threshold ({config.MAX_ALLOWED_SPREAD_PIPS:.2f} pips)."
+            )
             return None
 
+        tick = mt5.symbol_info_tick(self.symbol)
+        sym_info = mt5.symbol_info(self.symbol)
+        if not tick or not sym_info:
+            logger.error(f"Cannot fetch tick or symbol info for {self.symbol}.")
+            return None
+
+        point = sym_info.point if sym_info and sym_info.point > 0 else 0.00001
+        digits = sym_info.digits if sym_info else 5
+        pip_size = point * (10.0 if digits in (3, 5) else 1.0)
+
         order_type = mt5.ORDER_TYPE_BUY if signal_type in (config.CONTRACT_TYPE_UP, "BUY", "MULTUP") else mt5.ORDER_TYPE_SELL
-        sl_distance = (stop_loss_usd / self.volume) if self.volume > 0 else 75.0
-        tp_usd = self.volume * getattr(config, "TAKE_PROFIT_LOT_MULT", 100.0)
-        tp_distance = (tp_usd / self.volume) if self.volume > 0 else 100.0
+        
+        sl_pips = getattr(config, "HARD_SL_PIPS", 10.0)
+        tp_pips = getattr(config, "TP_PIPS", 20.0)
+        sl_distance = sl_pips * pip_size
+        tp_distance = tp_pips * pip_size
 
         if order_type == mt5.ORDER_TYPE_BUY:
             price = tick.ask
-            sl = tick.bid - sl_distance
-            tp = price + tp_distance
+            sl = round(tick.bid - sl_distance, digits)
+            tp = round(price + tp_distance, digits)
         else:
             price = tick.bid
-            sl = tick.ask + sl_distance
-            tp = price - tp_distance
+            sl = round(tick.ask + sl_distance, digits)
+            tp = round(price - tp_distance, digits)
 
-        # Determine supported filling mode (Weltrade requires ORDER_FILLING_FOK)
-        sym_info = mt5.symbol_info(self.symbol)
+        # Determine supported filling mode (Weltrade requires ORDER_FILLING_FOK or IOC)
         filling_mode = mt5.ORDER_FILLING_FOK
         if sym_info and hasattr(sym_info, 'filling_mode'):
-            # SYMBOL_FILLING_FOK = 1, SYMBOL_FILLING_IOC = 2
-            if sym_info.filling_mode & 1:  # SYMBOL_FILLING_FOK flag
+            if sym_info.filling_mode & 1:
                 filling_mode = mt5.ORDER_FILLING_FOK
-            elif sym_info.filling_mode & 2:  # SYMBOL_FILLING_IOC flag
+            elif sym_info.filling_mode & 2:
                 filling_mode = mt5.ORDER_FILLING_IOC
 
         request = {
@@ -208,17 +241,20 @@ class MT5Client:
             "symbol": self.symbol,
             "volume": self.volume,
             "type": order_type,
-            "price": price,
-            "sl": round(sl, 2),
-            "tp": round(tp, 2),
+            "price": round(price, digits),
+            "sl": sl,
+            "tp": tp,
             "deviation": 20,
-            "magic": 108920,
-            "comment": "Aegis-BTC Engine Trade",
+            "magic": config.MAGIC_NUMBER,
+            "comment": "Aegis EURUSD Master",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": filling_mode,
         }
 
-        logger.info(f"Sending MT5 Order: {signal_type} {self.volume} lots {self.symbol} @ ${price:.2f} | SL: ${sl:.2f} | TP: ${tp:.2f} (+${tp_usd:.2f} target)")
+        logger.info(
+            f"Sending MT5 Order: {signal_type} {self.volume} lots {self.symbol} @ {price:.5f} | "
+            f"SL: {sl:.5f} (-{sl_pips:.1f} pips) | TP: {tp:.5f} (+{tp_pips:.1f} pips) | Spread: {spread_pips:.2f} pips"
+        )
         result = mt5.order_send(request)
 
         if result is None or result.retcode not in (mt5.TRADE_RETCODE_DONE, 10009):
@@ -227,7 +263,7 @@ class MT5Client:
             return None
 
         self.active_ticket = result.order
-        logger.info(f"🎉 [MT5 ORDER EXECUTED] Ticket ID: {result.order} | Price: ${result.price:.2f}")
+        logger.info(f"🎉 [MT5 ORDER EXECUTED] Ticket ID: {result.order} | Price: {result.price:.5f}")
         return {
             "ticket": result.order,
             "price": result.price,
@@ -322,12 +358,21 @@ class MT5Client:
         sym_info = mt5.symbol_info(self.symbol)
         tick = mt5.symbol_info_tick(self.symbol)
 
-        point = sym_info.point if sym_info and hasattr(sym_info, 'point') and sym_info.point > 0 else 0.01
-        stops_level = sym_info.stops_level if sym_info and hasattr(sym_info, 'stops_level') else 100
-        min_stop_distance = max(stops_level * point, 2.00)  # Safety clearance distance from spot tick
+        point = sym_info.point if sym_info and hasattr(sym_info, 'point') and sym_info.point > 0 else 0.00001
+        digits = sym_info.digits if sym_info and hasattr(sym_info, 'digits') else 5
+        pip_factor = 10.0 if digits in (3, 5) else 1.0
+        pip_size = point * pip_factor
+        stops_level = sym_info.stops_level if sym_info and hasattr(sym_info, 'stops_level') else 10
+        min_stop_distance = max(stops_level * point, 2.0 * pip_size)  # Safety clearance distance from spot tick
 
         # Convert USD SL floor into target price level
-        price_offset = sl_floor_usd / volume
+        # For EURUSD: 1 pip = $0.10 on 0.01 lot -> pip_offset = sl_floor_usd / (volume * 10.0)
+        if "BTC" in self.symbol.upper():
+            price_offset = sl_floor_usd / volume
+        else:
+            pips_floor = sl_floor_usd / (volume * 10.0) if volume > 0 else 0.0
+            price_offset = pips_floor * pip_size
+
         if pos.type == mt5.ORDER_TYPE_BUY:
             ideal_sl = entry_price + price_offset
             # Ensure new SL is below current bid tick by at least min_stop_distance
@@ -345,10 +390,11 @@ class MT5Client:
             if pos.sl > 0:
                 new_sl = min(new_sl, pos.sl)
 
-        new_sl = round(new_sl, 2)
+        new_sl = round(new_sl, digits)
 
-        # Avoid redundant server requests if SL has not shifted (> $0.10 difference)
-        if abs(new_sl - pos.sl) < 0.10:
+        # Avoid redundant server requests if SL has shifted by less than 0.5 pip
+        min_shift = 0.5 * pip_size
+        if abs(new_sl - pos.sl) < min_shift:
             return True
 
         request = {
@@ -359,11 +405,11 @@ class MT5Client:
             "tp": pos.tp
         }
 
-        logger.info(f"Modifying MT5 Server SL for Ticket #{pos.ticket}: Target SL = ${new_sl:.2f} (Floor: ${sl_floor_usd:+.2f})")
+        logger.info(f"Modifying MT5 Server SL for Ticket #{pos.ticket}: Target SL = {new_sl:.5f} (Floor: ${sl_floor_usd:+.2f})")
         result = mt5.order_send(request)
 
         if result and result.retcode in (mt5.TRADE_RETCODE_DONE, 10009):
-            logger.info(f"🎉 [MT5 SERVER SL UPDATED] Ticket #{pos.ticket} SL shifted to ${new_sl:.2f}")
+            logger.info(f"🎉 [MT5 SERVER SL UPDATED] Ticket #{pos.ticket} SL shifted to {new_sl:.5f}")
             return True
         else:
             err = result.comment if result else (mt5.last_error() if mt5 else "Unknown error")
@@ -371,22 +417,22 @@ class MT5Client:
             
             # Fallback: if server rejected due to invalid stops (10016), adjust SL buffer slightly and retry
             if result and result.retcode == 10016:  # TRADE_RETCODE_INVALID_STOPS
-                fallback_distance = min_stop_distance + 5.0
+                fallback_distance = min_stop_distance + (3.0 * pip_size)
                 if pos.type == mt5.ORDER_TYPE_BUY:
-                    fallback_sl = round(tick.bid - fallback_distance, 2) if tick else new_sl
+                    fallback_sl = round(tick.bid - fallback_distance, digits) if tick else new_sl
                     if pos.sl > 0:
                         fallback_sl = max(fallback_sl, pos.sl)
                 else:
-                    fallback_sl = round(tick.ask + fallback_distance, 2) if tick else new_sl
+                    fallback_sl = round(tick.ask + fallback_distance, digits) if tick else new_sl
                     if pos.sl > 0:
                         fallback_sl = min(fallback_sl, pos.sl)
 
-                if abs(fallback_sl - pos.sl) >= 0.10:
+                if abs(fallback_sl - pos.sl) >= min_shift:
                     request["sl"] = fallback_sl
-                    logger.info(f"Retrying MT5 Server SL with fallback distance: Target SL = ${fallback_sl:.2f}")
+                    logger.info(f"Retrying MT5 Server SL with fallback distance: Target SL = {fallback_sl:.5f}")
                     retry_res = mt5.order_send(request)
                     if retry_res and retry_res.retcode in (mt5.TRADE_RETCODE_DONE, 10009):
-                        logger.info(f"🎉 [MT5 SERVER SL UPDATED - FALLBACK] Ticket #{pos.ticket} SL shifted to ${fallback_sl:.2f}")
+                        logger.info(f"🎉 [MT5 SERVER SL UPDATED - FALLBACK] Ticket #{pos.ticket} SL shifted to {fallback_sl:.5f}")
                         return True
 
             return False

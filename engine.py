@@ -43,11 +43,12 @@ class PositionManager:
             f"Entry: ${entry_price:.2f} | Stake: ${self.stake} | Leverage: x{self.multiplier}"
         )
 
-    def update_pnl_and_ratchet(self, current_pnl: float) -> Tuple[bool, float, str]:
+    def update_pnl_and_ratchet(self, current_pnl: float, runtime_seconds: float = 0.0) -> Tuple[bool, float, str]:
         """
-        Evaluates active contract PnL against Step-Ratchet Trailing Rules:
-        - At peak PnL >= +$0.50: Ratchet SL floor to $0.00 (Break-Even).
-        - At peak PnL >= +$0.75: Advance SL floor in +$0.25 steps, maintaining $0.50 trailing gap.
+        Evaluates active contract PnL against Step-Ratchet Trailing Rules & Stagnation Time-Stop:
+        - Stagnation Time-Stop: If runtime >= TIME_STOP_SECONDS (20 min) and PnL >= 0, close to release capital.
+        - Break-Even Trigger: At peak PnL >= config.BREAK_EVEN_TRIGGER (+6.0 pips / +$0.60): Ratchet SL floor to $0.00.
+        - Step-Ratchet Trailing: Advance SL floor in +$0.40 (+4 pips) increments, maintaining trailing gap.
         
         Returns (should_close_manually, updated_sl_floor, reason).
         """
@@ -57,14 +58,23 @@ class PositionManager:
         if current_pnl > self.peak_pnl:
             self.peak_pnl = current_pnl
 
-        # 1. Break-Even Trigger check (+$0.50 PnL)
+        # 1. Stagnation Time-Stop Check (20-minute flat trade exit)
+        time_stop_limit = getattr(config, "TIME_STOP_SECONDS", 1200)
+        current_runtime = runtime_seconds if runtime_seconds > 0 else (time.time() - self.entry_time)
+        if current_runtime >= time_stop_limit and current_pnl >= 0.0:
+            reason = f"Stagnation Time-Stop reached ({int(current_runtime)}s >= {time_stop_limit}s) with flat/positive PnL (${current_pnl:+.2f})"
+            logger.info(f"[TIME STOP TRIGGERED] {reason}")
+            return True, self.current_sl_floor, reason
+
+        # 2. Break-Even Trigger check (+$0.60 PnL / +6 pips)
         if self.peak_pnl >= config.BREAK_EVEN_TRIGGER:
             if self.current_sl_floor < 0.0:
                 self.current_sl_floor = 0.0
                 logger.info(f"[STEP-RATCHET] Break-Even triggered! SL Floor moved to $0.00 (Peak PnL: ${self.peak_pnl:.2f})")
 
-        # 2. Step Profit Locking (+$0.75 PnL and above in tight $0.05 / 5-cent steps)
-        if self.peak_pnl >= 0.75:
+        # 3. Step Profit Locking (+4.0 pips / +$0.40 step ratcheting)
+        trigger_level = config.BREAK_EVEN_TRIGGER + config.TRAILING_STEP_USD
+        if self.peak_pnl >= trigger_level:
             trailing_floor = self.peak_pnl - config.TRAILING_GAP_USD
             step = config.TRAILING_STEP_USD
             quantized_step_floor = round(int(round(trailing_floor / step, 4)) * step, 2)
@@ -76,9 +86,9 @@ class PositionManager:
                     f"(Peak PnL: ${self.peak_pnl:.2f} | Gap: ${config.TRAILING_GAP_USD:.2f})"
                 )
 
-        # 3. Check if current PnL has breached our local ratchet SL floor
+        # 4. Check if current PnL has breached our local ratchet SL floor
         # Note: Manual sell is only sent if SL floor is >= 0.0 (Break-Even or Profit Lock)
-        # Server-side native SL handles initial -0.75 hard SL.
+        # Server-side native SL handles initial hard SL.
         if self.current_sl_floor >= 0.0 and current_pnl <= self.current_sl_floor:
             reason = f"Ratchet SL Floor hit at ${current_pnl:.2f} <= ${self.current_sl_floor:.2f}"
             logger.info(f"[RATCHET TRAILING STOP TRIGGERED] {reason}")
@@ -204,8 +214,9 @@ class AegisExecutionEngine:
                 "contract_id": contract_id
             }
 
-        # 2. Update local Step-Ratchet Trailing Engine
-        should_manual_close, sl_floor, reason = self.position_mgr.update_pnl_and_ratchet(current_pnl)
+        # 2. Update local Step-Ratchet Trailing Engine & Time-Stop
+        runtime_sec = float(poc.get("runtime_seconds", 0.0))
+        should_manual_close, sl_floor, reason = self.position_mgr.update_pnl_and_ratchet(current_pnl, runtime_sec)
         if should_manual_close:
             return {
                 "action": "TRIGGER_MANUAL_SELL",
