@@ -88,7 +88,57 @@ class MT5Bridge:
                 return False
 
         self.resolve_filling_mode()
+        self.ensure_mt5_gui_and_chart()
         return True
+
+    def ensure_mt5_gui_and_chart(self):
+        """
+        Ensure MetaTrader 5 GUI window is running on Windows desktop
+        and configure the active profile's chart for the target symbol.
+        """
+        import glob
+        import subprocess
+        import os
+
+        # 1. Update chart files in MT5 data directory to active symbol & timeframe
+        term_info = mt5.terminal_info() if mt5 else None
+        data_path = term_info.data_path if term_info else r"C:\Users\Blessing\AppData\Roaming\MetaQuotes\Terminal\37DFD387E83142603765C3D8E280A1B5"
+        charts_base = os.path.join(data_path, "MQL5", "Profiles", "Charts")
+        period_mins = max(1, config.TF_TRIGGER // 60)
+
+        if os.path.exists(charts_base):
+            for prof in ["Market Overview", "Default", "Euro"]:
+                prof_dir = os.path.join(charts_base, prof)
+                if os.path.exists(prof_dir):
+                    for chr_file in glob.glob(os.path.join(prof_dir, "chart*.chr")):
+                        try:
+                            with open(chr_file, 'r', encoding='utf-16', errors='ignore') as f:
+                                content = f.read()
+                            new_lines = []
+                            for line in content.splitlines():
+                                if line.startswith('symbol='):
+                                    new_lines.append(f'symbol={self.symbol}')
+                                elif line.startswith('period_size='):
+                                    new_lines.append(f'period_size={period_mins}')
+                                elif line.startswith('digits='):
+                                    new_lines.append('digits=5')
+                                else:
+                                    new_lines.append(line)
+                            with open(chr_file, 'w', encoding='utf-16') as f:
+                                f.write('\n'.join(new_lines) + '\n')
+                        except Exception as e:
+                            logger.debug(f"Could not update chart file {chr_file}: {e}")
+
+        # 2. Launch MT5 GUI terminal process if not running
+        exe_path = os.path.join(term_info.path, "terminal64.exe") if term_info else r"C:\Program Files\Weltrade MT5 Terminal\terminal64.exe"
+        if os.path.exists(exe_path):
+            try:
+                res = subprocess.run(["tasklist", "/fi", "imagename eq terminal64.exe"], capture_output=True, text=True)
+                if "terminal64.exe" not in res.stdout.lower():
+                    logger.info(f"🖥️ Launching visible Weltrade MT5 window ({self.symbol} M{period_mins})...")
+                    subprocess.Popen([exe_path])
+            except Exception as e:
+                logger.warning(f"Could not check/launch MT5 GUI: {e}")
 
     def _resolve_symbol_variant(self) -> bool:
         """Attempt to find broker-specific symbol variants (e.g. EURUSD.pro, EURUSDm)."""

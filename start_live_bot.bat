@@ -16,6 +16,14 @@ echo ===========================================================================
 set choice=1
 set /p choice="Enter choice (1, 2, or 3, default 1): "
 
+:: Ensure Weltrade MT5 GUI window is running on Windows desktop
+tasklist /fi "imagename eq terminal64.exe" 2>nul | findstr /i "terminal64.exe" >nul
+if errorlevel 1 (
+    echo [AEGIS] Opening Weltrade MT5 Terminal window...
+    start "" "C:\Program Files\Weltrade MT5 Terminal\terminal64.exe"
+    timeout /t 2 /nobreak >nul
+)
+
 if "%choice%"=="2" goto run_m1
 if "%choice%"=="3" goto run_pure
 goto run_m5
