@@ -263,6 +263,18 @@ async def run_live_bot():
         logger.error(f"Unexpected error in live bot loop: {e}", exc_info=True)
 
 
+def spawn_terminal_window(mode: Optional[str] = None):
+    """Launch live bot in a separate, visible PowerShell window on Windows desktop."""
+    import subprocess
+    mode_name = mode or config.ACTIVE_MODE
+    cmd = (
+        'powershell -Command "Start-Process powershell '
+        f'-ArgumentList \'-NoExit\', \'-Command\', \'cd \\"c:\\Workspace\\aegisBTC\\"; python main.py --live --child --mode {mode_name}\'"'
+    )
+    logger.info(f"🖥️ Spawning dedicated visible desktop terminal for Aegis [{mode_name}]...")
+    subprocess.Popen(cmd, shell=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Aegis-Weltrade AI Execution Engine")
     parser.add_argument("--validate", action="store_true", help="Run self-validation suite and exit")
@@ -272,6 +284,8 @@ def main():
         help="Select operational profile"
     )
     parser.add_argument("--live", action="store_true", help="Start live trading execution")
+    parser.add_argument("--child", action="store_true", help="Internal flag indicating execution inside spawned window")
+    parser.add_argument("--no-spawn", action="store_true", help="Run in current terminal without spawning new window")
     args = parser.parse_args()
 
     # Map profile choices
@@ -287,6 +301,11 @@ def main():
     if args.validate:
         success = run_self_validation()
         sys.exit(0 if success else 1)
+
+    # Auto-spawn dedicated visible window when --live is invoked from an external launcher
+    if args.live and not args.child and not args.no_spawn:
+        spawn_terminal_window(config.ACTIVE_MODE)
+        sys.exit(0)
 
     print_banner()
     if args.live:
