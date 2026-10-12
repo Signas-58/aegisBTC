@@ -4,6 +4,7 @@ Automated Test Suite for Aegis-BTC Trading Engine.
 
 import unittest
 import time
+import os
 import config
 from indicators import (
     calculate_ema, calculate_rsi, calculate_tr_and_atr,
@@ -239,6 +240,43 @@ class TestAegisBTC(unittest.TestCase):
         allowed_after, reason_after = engine.is_execution_allowed()
         self.assertTrue(allowed_after)
         self.assertEqual(reason_after, "Ready")
+
+    def test_ai_scanner_market_regime(self):
+        from ai_scanner import MiniAIScanner
+        scanner = MiniAIScanner(cache_file="test_ai_model.joblib")
+
+        # Generate synthetic trending and choppy candles
+        test_candles = []
+        base_price = 1.0850
+        for i in range(100):
+            test_candles.append({
+                "open": base_price + i * 0.0001,
+                "high": base_price + i * 0.0001 + 0.0003,
+                "low": base_price + i * 0.0001 - 0.0001,
+                "close": base_price + (i + 1) * 0.0001,
+                "epoch": 1700000000 + i * 60
+            })
+
+        trained = scanner.train_on_history(test_candles)
+        self.assertTrue(trained)
+
+        # Predict confidence on live candle sequence
+        conf = scanner.predict_regime_confidence(test_candles[-30:])
+        self.assertGreaterEqual(conf, 0.0)
+        self.assertLessEqual(conf, 1.0)
+
+        # Cleanup test model cache
+        if os.path.exists("test_ai_model.joblib"):
+            try:
+                os.remove("test_ai_model.joblib")
+            except Exception:
+                pass
+
+    def test_telemetry_graceful_handling(self):
+        import telemetry
+        # With default empty token, it should safely return False without exception
+        result = telemetry.send_telegram_alert("Test notification", blocking=True)
+        self.assertFalse(result)
 
 
 if __name__ == "__main__":

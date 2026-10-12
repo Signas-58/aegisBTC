@@ -216,6 +216,11 @@ async def run_live_bot():
     print_banner()
     engine = AegisExecutionEngine()
     
+    # Initialize AI Market Regime Scanner & Telemetry
+    from ai_scanner import MiniAIScanner
+    import telemetry
+    ai_scanner = MiniAIScanner()
+
     # Initialize MetaTrader 5 (Weltrade / MT5) Client
     from mt5_client import MT5Client
     client = MT5Client()
@@ -231,8 +236,18 @@ async def run_live_bot():
         is_mt5 = False
     else:
         is_mt5 = True
+        # Train AI Market Regime Classifier on recent 1,000 M1 candles
+        if config.AI_ENABLED:
+            logger.info("🧠 [AI SCANNER] Ingesting 1,000 historical M1 candles from MT5 for regime model training...")
+            hist_m1 = client.fetch_historical_m1_candles(count=1000)
+            if hist_m1:
+                ai_scanner.train_on_history(hist_m1)
 
-    logger.info(f"[AEGIS-BTC LIVE SCANNER RUNNING] Mode: {'MT5 (Weltrade)' if is_mt5 else 'Deriv WS'} | Symbol: {client.symbol}...")
+        # Dispatch Telegram startup notification
+        starting_bal = float(client.account_info.get("balance", 0.0))
+        telemetry.notify_bot_started(client.symbol, client.volume, starting_bal, config.AI_ENABLED)
+
+    logger.info(f"[AEGIS LIVE SCANNER RUNNING] Mode: {'MT5 (Weltrade)' if is_mt5 else 'Deriv WS'} | Symbol: {client.symbol}...")
 
     try:
         while True:
@@ -245,6 +260,9 @@ async def run_live_bot():
                     closed_ticket = engine.position_mgr.active_contract_id
                     realized_pnl = client.get_closed_position_profit(closed_ticket) if closed_ticket else -config.HARD_STOP_LOSS_USD
                     logger.info(f"[MT5 SERVER CLOSE DETECTED] Position #{closed_ticket} closed on broker server. Realized PnL: ${realized_pnl:+.2f}")
+                    telemetry.notify_trade_closed(
+                        closed_ticket, realized_pnl, engine.position_mgr.peak_pnl, 0, "Broker Server Close (SL/TP)"
+                    )
                     engine.position_mgr.close_position()
                     engine._record_trade_result(realized_pnl, is_server_close=True)
             else:
@@ -267,11 +285,14 @@ async def run_live_bot():
                 candles_3m = client.candles_5m
                 candles_1m = client.candles_1m
 
-            # Run Strategy Analysis on Ingested Candles
-            analysis = analyze_market_and_generate_signal(candles_15m, candles_5m, candles_1m, candles_3m)
+            # Run Strategy Analysis on Ingested Candles with AI Regime Filter
+            analysis = analyze_market_and_generate_signal(
+                candles_15m, candles_5m, candles_1m, candles_3m, ai_scanner=ai_scanner
+            )
 
             current_price = analysis.get("current_price") or (client.get_latest_price() if is_mt5 else 0.0)
             confidence_score = analysis.get("confidence_score", 0)
+            ai_confidence = analysis.get("ai_confidence", 1.0)
             regime = analysis.get("regime", "REGIME_CONSOLIDATING")
             signal = analysis.get("signal", "NO_SIGNAL")
             in_sb = analysis.get("in_silver_bullet", False)
@@ -289,9 +310,18 @@ async def run_live_bot():
                         "status": "open"
                     })
                     current_floor = engine.position_mgr.current_sl_floor
+
+                    # Check for Break-Even milestone notification
+                    if current_floor == 0.0 and not getattr(engine.position_mgr, '_notified_be', False):
+                        engine.position_mgr._notified_be = True
+                        telemetry.notify_break_even(pos["ticket"], pos["price_open"], profit)
+
                     if res.get("action") == "TRIGGER_MANUAL_SELL":
                         logger.info(f"[PROFIT LOCK / TIME STOP TRIGGERED] Closing MT5 position #{pos['ticket']}: {res['reason']}")
                         client.close_position(pos["ticket"])
+                        telemetry.notify_trade_closed(
+                            pos["ticket"], profit, engine.position_mgr.peak_pnl, int(runtime_sec), res['reason']
+                        )
                         engine.position_mgr.close_position()
                         engine._record_trade_result(profit)
                     else:
@@ -309,9 +339,10 @@ async def run_live_bot():
                 spread_pips = client.get_spread_pips() if is_mt5 else 0.0
                 sb_str = "ACTIVE 🔥" if in_sb else "Inactive 💤"
                 spread_alert = "⚠️ WIDE SPREAD" if spread_pips > config.MAX_ALLOWED_SPREAD_PIPS else "OK"
+                ai_str = f"AI Expansion: {ai_confidence * 100:.1f}%" if config.AI_ENABLED else "AI: Off"
                 logger.info(
                     f"[SCANNING TICK 25s] {client.symbol}: {current_price:.5f} | Spread: {spread_pips:.1f} pips ({spread_alert}) | "
-                    f"Session Gate: {sb_str} | Regime: {regime} | Setup Score: {confidence_score}% | "
+                    f"{ai_str} | Session Gate: {sb_str} | Regime: {regime} | Setup Score: {confidence_score}% | "
                     f"Signal: {signal} | Status: Idle Scanning..."
                 )
 
@@ -319,11 +350,18 @@ async def run_live_bot():
             if signal != "NO_SIGNAL" and not is_active:
                 allowed, reason = engine.is_execution_allowed()
                 if allowed:
-                    logger.info(f"🔥 [SIGNAL TRIGGERED] {signal} | Score: {confidence_score}% | Price: {current_price:.5f}")
+                    logger.info(f"🔥 [SIGNAL TRIGGERED] {signal} | Score: {confidence_score}% | AI Confidence: {ai_confidence * 100:.1f}% | Price: {current_price:.5f}")
                     if is_mt5:
                         order_res = client.send_order(signal, config.HARD_STOP_LOSS_USD)
                         if order_res:
                             engine.position_mgr.open_position(order_res["ticket"], signal, order_res["price"])
+                            # Send Telegram order notification
+                            sym_point = 0.00001
+                            sl_val = order_res["price"] - (config.HARD_SL_PIPS * 0.0001) if signal in ("BUY", "MULTUP") else order_res["price"] + (config.HARD_SL_PIPS * 0.0001)
+                            tp_val = order_res["price"] + (config.TP_PIPS * 0.0001) if signal in ("BUY", "MULTUP") else order_res["price"] - (config.TP_PIPS * 0.0001)
+                            telemetry.notify_trade_entered(
+                                order_res["ticket"], signal, order_res["price"], sl_val, tp_val, confidence_score, ai_confidence
+                            )
                         else:
                             logger.warning("[EXECUTION BLOCKED] MT5 order send returned None (Check spread or broker response).")
                     else:

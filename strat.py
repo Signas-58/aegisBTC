@@ -150,18 +150,20 @@ def analyze_market_and_generate_signal(
     candles_5m: List[Dict[str, float]],
     candles_1m: List[Dict[str, float]],
     candles_3m: List[Dict[str, float]] = None,
-    strategy_mode: str = None
+    strategy_mode: str = None,
+    ai_scanner: Any = None
 ) -> Dict[str, Any]:
     """
-    Main MTF Analysis Entry Point for Aegis-BTC.
+    Main MTF Analysis Entry Point for Aegis Trading Engine.
     Processes 15m (Macro), 5m (Structure/Regime), 3m (FVG/Execution), 1m (Trigger) candles.
-    Supports Dual Strategy Modes ("AEGIS_CLASSIC" and "HYBRID_SILVER_BULLET").
+    Incorporates AI Market Regime Classifier confidence to eliminate sideways chop.
     Returns signal dict.
     """
     mode = (strategy_mode or config.STRATEGY_MODE).upper()
     no_signal_res = {
         "signal": "NO_SIGNAL",
         "confidence_score": 0,
+        "ai_confidence": 1.0,
         "reason": "Insufficient candle data",
         "breakdown": {},
         "current_price": 0.0,
@@ -236,6 +238,14 @@ def analyze_market_and_generate_signal(
         adx_accel = (adx_1m_list[-2] >= getattr(config, "ADX_MIN_THRESHOLD", 22.0)) and \
                     (adx_1m_list[-2] > adx_1m_list[-3] > adx_1m_list[-4])
 
+    # 5. AI Market Regime Classifier Confidence (Random Forest Expansion Filter)
+    ai_confidence = 1.0
+    if ai_scanner and getattr(config, "AI_ENABLED", True):
+        ai_confidence = ai_scanner.predict_regime_confidence(candles_1m)
+
+    ai_threshold = getattr(config, "AI_CONFIDENCE_THRESHOLD", 0.70)
+    ai_approved = (ai_confidence >= ai_threshold) if getattr(config, "AI_ENABLED", True) else True
+
     # Evaluate potential signals for BUY and SELL
     potential_signals = []
     candidate_dirs = [config.CONTRACT_TYPE_UP, config.CONTRACT_TYPE_DOWN]
@@ -273,18 +283,27 @@ def analyze_market_and_generate_signal(
         )
         
         if score >= config.MIN_CONFIDENCE_SCORE:
-            potential_signals.append({
-                "signal": candidate_dir,
-                "confidence_score": score,
-                "breakdown": breakdown,
-                "reason": f"[{mode}] MTF Confluence Score {score}% >= {config.MIN_CONFIDENCE_SCORE}% ({candidate_dir})"
-            })
+            if not ai_approved:
+                logger.info(
+                    f"⚠ [AI REGIME BLOCKED] Setup score {score}% met threshold, but AI Regime Confidence "
+                    f"({ai_confidence * 100:.1f}%) < {ai_threshold * 100:.0f}%. Market is in sideways chop."
+                )
+            else:
+                potential_signals.append({
+                    "signal": candidate_dir,
+                    "confidence_score": score,
+                    "ai_confidence": ai_confidence,
+                    "breakdown": breakdown,
+                    "reason": f"[{mode}] Confluence Score {score}% >= {config.MIN_CONFIDENCE_SCORE}% | AI Confidence: {ai_confidence * 100:.1f}% ({candidate_dir})"
+                })
 
     if not potential_signals:
+        ai_reason = f" (AI Expansion: {ai_confidence * 100:.1f}%)" if (ai_scanner and config.AI_ENABLED) else ""
         return {
             "signal": "NO_SIGNAL",
             "confidence_score": 0,
-            "reason": f"No directional setup met confidence threshold ({config.MIN_CONFIDENCE_SCORE}%)",
+            "ai_confidence": ai_confidence,
+            "reason": f"No directional setup approved{ai_reason}",
             "breakdown": {},
             "current_price": current_price,
             "regime": regime,
@@ -294,6 +313,7 @@ def analyze_market_and_generate_signal(
 
     best_signal = max(potential_signals, key=lambda s: s['confidence_score'])
     best_signal["current_price"] = current_price
+    best_signal["ai_confidence"] = ai_confidence
     best_signal["regime"] = regime
     best_signal["atr_5m"] = atr_5m
     best_signal["in_silver_bullet"] = in_sb

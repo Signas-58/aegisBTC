@@ -108,6 +108,33 @@ class PositionManager:
         }
 
 
+def is_blackout_active() -> Tuple[bool, str]:
+    """
+    Check if the current Central Africa Time (CAT / UTC+2) falls within:
+    - Daily Rollover spread widening blackout (22:45 to 00:30 CAT)
+    - Weekend close blackout (Fridays after 21:00 CAT through Sunday)
+    """
+    from datetime import datetime, timezone, timedelta
+    now_cat = datetime.now(timezone.utc) + timedelta(hours=2)
+    time_str = now_cat.strftime("%H:%M")
+    weekday = now_cat.weekday()  # 0=Monday, 4=Friday, 5=Saturday, 6=Sunday
+
+    # 1. Weekend Blackout (Friday >= 21:00 CAT through Sunday)
+    friday_close = getattr(config, "FRIDAY_CLOSE_TIME", "21:00")
+    if weekday == 4 and time_str >= friday_close:
+        return True, f"Weekend Blackout active (Friday > {friday_close} CAT)"
+    if weekday in (5, 6):
+        return True, "Weekend Blackout active (Market closed on Saturday/Sunday)"
+
+    # 2. Daily Rollover Blackout (22:45 to 00:30 CAT)
+    rollover_start = getattr(config, "ROLLOVER_START", "22:45")
+    rollover_end = getattr(config, "ROLLOVER_END", "00:30")
+    if time_str >= rollover_start or time_str < rollover_end:
+        return True, f"Daily Rollover Spread Blackout active ({rollover_start}-{rollover_end} CAT)"
+
+    return False, ""
+
+
 class AegisExecutionEngine:
     """
     Main Risk & Execution State Machine.
@@ -150,6 +177,11 @@ class AegisExecutionEngine:
 
         if self.is_halted:
             return False, f"ENGINE HALTED: {self.halt_reason}"
+
+        # Rollover & Weekend Blackout Check
+        is_blackout, blackout_reason = is_blackout_active()
+        if is_blackout:
+            return False, blackout_reason
 
         # Session Time Limit Check
         elapsed_minutes = (now - self.session_start_time) / 60.0

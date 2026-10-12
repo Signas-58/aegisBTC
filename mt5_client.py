@@ -117,7 +117,7 @@ class MT5Client:
 
     def get_spread_pips(self) -> float:
         """
-        Calculate real-time bid-ask spread in pips.
+        Calculate real-time bid-ask spread in pips and record to rolling history.
         On 5-digit Forex (EURUSD): 1 pip = 10 * point = 0.00010.
         """
         if not self.is_connected or mt5 is None:
@@ -130,7 +130,42 @@ class MT5Client:
         digits = sym_info.digits if sym_info else 5
         pip_factor = 10.0 if digits in (3, 5) else 1.0
         spread_points = (tick.ask - tick.bid) / point
-        return round(spread_points / pip_factor, 2)
+        spread_pips = round(spread_points / pip_factor, 2)
+
+        if not hasattr(self, 'recent_spreads'):
+            self.recent_spreads = []
+        self.recent_spreads.append(spread_pips)
+        if len(self.recent_spreads) > 20:
+            self.recent_spreads.pop(0)
+
+        return spread_pips
+
+    def get_rolling_mean_spread(self) -> float:
+        """Calculate 20-period rolling average spread in pips."""
+        if not hasattr(self, 'recent_spreads') or not self.recent_spreads:
+            return 0.5
+        return round(sum(self.recent_spreads) / len(self.recent_spreads), 2)
+
+    def fetch_historical_m1_candles(self, count: int = 1000) -> List[Dict[str, float]]:
+        """
+        Ingest historical 1-minute OHLC candles from MT5 for initial AI model training.
+        """
+        if not self.is_connected or mt5 is None:
+            return []
+        rates = mt5.copy_rates_from_pos(self.symbol, mt5.TIMEFRAME_M1, 0, count)
+        if rates is None or len(rates) == 0:
+            logger.warning(f"Failed to fetch {count} historical M1 rates for {self.symbol}.")
+            return []
+        return [
+            {
+                "open": float(r['open']),
+                "high": float(r['high']),
+                "low": float(r['low']),
+                "close": float(r['close']),
+                "epoch": int(r['time'])
+            }
+            for r in rates
+        ]
 
     def fetch_mtf_candles(self) -> bool:
         """
@@ -187,13 +222,13 @@ class MT5Client:
 
     def send_order(self, signal_type: str, stop_loss_usd: float = config.HARD_STOP_LOSS_USD) -> Optional[Dict[str, Any]]:
         """
-        Execute instant market ORDER_TYPE_BUY or ORDER_TYPE_SELL with explicit SL and spread guard.
+        Execute instant market ORDER_TYPE_BUY or ORDER_TYPE_SELL with explicit SL and spread guards.
         """
         if not self.is_connected or mt5 is None:
             logger.error("Cannot send MT5 order: Not connected.")
             return None
 
-        # 1. Spread Guard Check
+        # 1. Absolute Spread Guard Check
         spread_pips = self.get_spread_pips()
         if spread_pips > config.MAX_ALLOWED_SPREAD_PIPS:
             logger.warning(
@@ -201,6 +236,17 @@ class MT5Client:
                 f"exceeds maximum allowed threshold ({config.MAX_ALLOWED_SPREAD_PIPS:.2f} pips)."
             )
             return None
+
+        # 2. Dynamic Relative Spread Filter (Max 1.5x rolling 20-candle MA)
+        if hasattr(self, 'recent_spreads') and len(self.recent_spreads) >= 10:
+            mean_spread = self.get_rolling_mean_spread()
+            max_rel_spread = round(config.RELATIVE_SPREAD_MULTIPLIER * mean_spread, 2)
+            if spread_pips > max_rel_spread:
+                logger.warning(
+                    f"[RELATIVE SPREAD GUARD] Volatility spread shock: {spread_pips:.2f} pips "
+                    f"> {config.RELATIVE_SPREAD_MULTIPLIER}x 20-MA ({max_rel_spread:.2f} pips). Order blocked."
+                )
+                return None
 
         tick = mt5.symbol_info_tick(self.symbol)
         sym_info = mt5.symbol_info(self.symbol)

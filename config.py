@@ -46,14 +46,27 @@ SILVER_BULLET_WINDOWS_CAT = [
 ]
 STRICT_SILVER_BULLET_GATE = True  # Strict gate: Only execute during high-volume institutional windows
 
-# Strategy Indicators & Confluence Thresholds
+# Strategy Indicators, AI Scanner & Confluence Thresholds
 MIN_CONFIDENCE_SCORE = 80  # Minimum 80/100 confluence required to enter
+AI_ENABLED = bool(os.getenv("AI_ENABLED", "True").lower() in ("true", "1", "yes"))
+AI_CONFIDENCE_THRESHOLD = float(os.getenv("AI_CONFIDENCE_THRESHOLD", "0.70"))  # Random Forest expansion confidence
+RELATIVE_SPREAD_MULTIPLIER = float(os.getenv("RELATIVE_SPREAD_MULTIPLIER", "1.5"))  # Max current spread vs 20-MA
 EMA_FAST = 8
 EMA_SLOW = 21
 EMA_MACRO = 200
 ADX_MIN_THRESHOLD = 22.0
 FVG_MIN_ATR_RATIO = 0.3
 PROXIMITY_GUARD_ATR_MULT = 0.5
+
+# Rollover & Weekend Blackout Windows (Central Africa Time / CAT - UTC+2)
+ROLLOVER_START = "22:45"
+ROLLOVER_END = "00:30"
+FRIDAY_CLOSE_TIME = "21:00"
+
+# Telegram Mobile Telemetry
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+ENABLE_TELEGRAM = bool(os.getenv("ENABLE_TELEGRAM", "False").lower() in ("true", "1", "yes"))
 
 # Risk Engine & Micro Ratchet (EURUSD Pip Math: 1 pip = 0.0001; on 0.01 lot, 1 pip = $0.10)
 HARD_SL_PIPS = 10.0         # 10.0 pips = $1.00 max risk per 0.01 lot
