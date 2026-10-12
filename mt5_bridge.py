@@ -182,36 +182,50 @@ class MT5Bridge:
         return macro, structure, trigger
 
     def get_live_tick(self) -> Optional[Dict[str, float]]:
-        """Fetch current bid, ask, and spread in pips."""
+        """Fetch current bid, ask, and spread in pips with candle rate fallback."""
         if mt5 is None or not self.is_connected:
             return None
 
         tick = mt5.symbol_info_tick(self.symbol)
-        if tick is None:
-            return None
-
         sym_info = mt5.symbol_info(self.symbol)
         point = sym_info.point if sym_info else 0.00001
         pip_unit = 0.0001 if ("EUR" in self.symbol.upper() or "USD" in self.symbol.upper()) else point * 10
 
-        spread_pips = (tick.ask - tick.bid) / pip_unit if pip_unit > 0 else 0.0
+        bid = float(tick.bid) if (tick and tick.bid > 0.0) else 0.0
+        ask = float(tick.ask) if (tick and tick.ask > 0.0) else 0.0
+        last = float(tick.last) if (tick and tick.last > 0.0) else bid
+        tick_time = float(tick.time) if (tick and tick.time > 0) else time.time()
+
+        # Fallback to latest M1 bar if live tick stream is idle
+        if bid == 0.0 or ask == 0.0:
+            rates = mt5.copy_rates_from_pos(self.symbol, mt5.TIMEFRAME_M1, 0, 1)
+            if rates is not None and len(rates) > 0:
+                r = rates[0]
+                bid = float(r['close'])
+                spread_pts = float(r['spread']) if r['spread'] > 0 else 9.0
+                ask = round(bid + (spread_pts * point), 5)
+                last = bid
+                tick_time = float(r['time'])
+
+        spread_pips = (ask - bid) / pip_unit if pip_unit > 0 else 0.0
 
         # Update rolling spread buffer
-        self.recent_spreads.append(spread_pips)
-        if len(self.recent_spreads) > 20:
-            self.recent_spreads.pop(0)
+        if spread_pips > 0.0:
+            self.recent_spreads.append(spread_pips)
+            if len(self.recent_spreads) > 20:
+                self.recent_spreads.pop(0)
 
         mean_spread = sum(self.recent_spreads) / len(self.recent_spreads) if self.recent_spreads else spread_pips
 
         return {
-            "bid": float(tick.bid),
-            "ask": float(tick.ask),
-            "last": float(tick.last),
+            "bid": float(bid),
+            "ask": float(ask),
+            "last": float(last),
             "spread_pips": float(spread_pips),
             "mean_spread_pips": float(mean_spread),
             "pip_unit": float(pip_unit),
             "point": float(point),
-            "time": float(tick.time)
+            "time": float(tick_time)
         }
 
     def validate_spread(self) -> Tuple[bool, str, float]:
