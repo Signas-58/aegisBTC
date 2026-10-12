@@ -16,6 +16,7 @@ from intelligence import (
 )
 
 
+from strategy import evaluate_confluence_proposal, is_in_session_window, detect_fvg
 from datetime import datetime, timezone, timedelta
 
 def is_in_silver_bullet_window(dt: datetime = None) -> bool:

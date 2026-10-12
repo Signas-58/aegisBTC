@@ -65,15 +65,20 @@ def send_telegram_alert(message: str, blocking: bool = False) -> bool:
 # PRE-FORMATTED TELEMETRY ALERT HELPERS
 # ==============================================================================
 
-def notify_bot_started(symbol: str, lot: float, balance: float, ai_enabled: bool):
+send_alert = send_telegram_alert
+
+
+def notify_bot_started(symbol: str, lot: float, balance: float, ai_enabled: bool, profile: str = ""):
+    active_prof = profile or getattr(config, "ACTIVE_MODE", "EXPANSION_M5")
     msg = (
-        f"🟢 <b>Aegis-Weltrade Engine Online</b>\n"
+        f"🟢 <b>Aegis Multi-Profile Engine Online [{active_prof}]</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"• <b>Asset:</b> {symbol}\n"
         f"• <b>Volume:</b> {lot} Lots\n"
         f"• <b>Starting Balance:</b> ${balance:.2f}\n"
         f"• <b>AI Regime Scanner:</b> {'Active 🧠' if ai_enabled else 'Disabled'}\n"
-        f"• <b>Session Gate:</b> London (09-12 CAT) | NY (15-18 CAT)"
+        f"• <b>Active Profile:</b> {active_prof}\n"
+        f"• <b>Risk Profile:</b> SL {config.HARD_SL_PIPS:.1f}p | TP {config.FIXED_TP_PIPS:.1f}p"
     )
     send_telegram_alert(msg)
 

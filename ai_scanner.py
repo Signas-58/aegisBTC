@@ -1,8 +1,9 @@
 """
-Aegis Mini AI Market Regime Classifier Engine.
+Aegis Profile-Adaptive AI Market Regime Classifier Engine.
 Uses a lightweight Random Forest Machine Learning classifier (scikit-learn)
-to classify 1-minute live market conditions into:
-- Trend / Expansion State (High win probability setup -> Trade Approved)
+specifically tuned to the active operational profile (SCALP_M1, EXPANSION_M5, SILVER_BULLET_PURE)
+to classify live market conditions into:
+- Trend / Expansion State (High probability setup -> Trade Approved)
 - Choppy / Sideways State (High spread churn & stop-out risk -> Trade Blocked)
 """
 
@@ -21,26 +22,46 @@ try:
     ML_AVAILABLE = True
 except ImportError:
     ML_AVAILABLE = False
-    logger.warning("[AI SCANNER NOTICE] scikit-learn or joblib not installed yet. AI Scanner will run in rule-based fallback mode.")
+    logger.warning("[AI SCANNER NOTICE] scikit-learn or joblib not installed. Running in rule-based fallback mode.")
 
 
-MODEL_CACHE_FILE = "aegis_ai_regime_model.joblib"
+def get_model_cache_path(mode: Optional[str] = None) -> str:
+    """Generate profile-specific model cache filepath."""
+    profile_mode = (mode or config.ACTIVE_MODE).upper()
+    models_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+    os.makedirs(models_dir, exist_ok=True)
+    return os.path.join(models_dir, f"regime_rf_{profile_mode}.joblib")
 
 
 class MiniAIScanner:
     """
-    Lightweight Random Forest Machine Learning Market Regime Classifier.
-    Evaluates 1-minute OHLCV sequences to output an Expansion Confidence Score (0.00 to 1.00).
+    Profile-Adaptive Random Forest Machine Learning Market Regime Classifier.
+    Adapts features and labeling horizon based on the active profile.
     """
 
-    def __init__(self, cache_file: str = MODEL_CACHE_FILE):
-        self.cache_file = cache_file
+    def __init__(self, mode: Optional[str] = None, cache_file: Optional[str] = None):
+        self.mode = (mode or config.ACTIVE_MODE).upper()
+        self.cache_file = cache_file if cache_file else get_model_cache_path(self.mode)
         self.is_trained = False
         self.model = None
 
         if ML_AVAILABLE:
             self.model = RandomForestClassifier(
-                n_estimators=50,
+                n_estimators=100,
+                max_depth=5,
+                random_state=42,
+                n_jobs=-1
+            )
+            self._load_cached_model()
+
+    def set_mode(self, mode: str):
+        """Switch operational profile and load profile-specific cached model."""
+        self.mode = mode.upper()
+        self.cache_file = get_model_cache_path(self.mode)
+        self.is_trained = False
+        if ML_AVAILABLE:
+            self.model = RandomForestClassifier(
+                n_estimators=100,
                 max_depth=5,
                 random_state=42,
                 n_jobs=-1
@@ -48,45 +69,54 @@ class MiniAIScanner:
             self._load_cached_model()
 
     def _load_cached_model(self) -> bool:
-        """Attempt to restore a previously trained model from disk."""
+        """Attempt to restore a previously trained model for this profile from disk."""
         if not ML_AVAILABLE or not os.path.exists(self.cache_file):
             return False
         try:
             self.model = joblib.load(self.cache_file)
             self.is_trained = True
-            logger.info(f"🧠 [AI SCANNER] Restored cached AI model from '{self.cache_file}'. Ready for live inference.")
+            logger.info(f"🧠 [AI SCANNER] Restored cached model for [{self.mode}] from '{os.path.basename(self.cache_file)}'.")
             return True
         except Exception as e:
             logger.warning(f"Could not load cached model '{self.cache_file}': {e}")
             return False
 
-    def _save_cached_model(self):
-        """Save trained model to disk for instant restoration on restart."""
+    def _save_cached_model(self) -> bool:
+        """Persist trained model weights to disk."""
         if not ML_AVAILABLE or not self.is_trained or self.model is None:
-            return
+            return False
         try:
             joblib.dump(self.model, self.cache_file)
-            logger.info(f"🧠 [AI SCANNER] Model cached to '{self.cache_file}' for zero-latency restarts.")
+            logger.info(f"💾 [AI SCANNER] Saved model for [{self.mode}] to '{os.path.basename(self.cache_file)}'.")
+            return True
         except Exception as e:
-            logger.warning(f"Could not cache model: {e}")
+            logger.warning(f"Failed to cache model '{self.cache_file}': {e}")
+            return False
 
     def candles_to_dataframe(self, candles: List[Dict[str, float]]) -> Optional['pd.DataFrame']:
-        """Convert list of MT5 OHLC candle dicts into a pandas DataFrame."""
+        """Convert a list of candle dicts to a pandas DataFrame."""
         if not ML_AVAILABLE or not candles:
             return None
-        df = pd.DataFrame(candles)
-        for col in ("open", "high", "low", "close"):
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-        return df
+        try:
+            df = pd.DataFrame(candles)
+            for col in ['open', 'high', 'low', 'close']:
+                if col in df.columns:
+                    df[col] = df[col].astype(float)
+            if 'volume' in df.columns:
+                df['volume'] = df['volume'].astype(float)
+            return df
+        except Exception as e:
+            logger.error(f"Error converting candles to DataFrame: {e}")
+            return None
 
     def extract_features(self, df: 'pd.DataFrame') -> 'pd.DataFrame':
         """
-        Transforms 1-minute OHLCV data into normalized statistical machine learning features:
-        1. Percentage returns & 10-period rolling volatility
-        2. High-Low range ratio relative to close
-        3. Moving average spread: (EMA_8 - EMA_21) / close
-        4. Range expansion factor: current candle range vs 10-period rolling mean range
+        Extract profile-adaptive predictive features from OHLCV candles:
+        1. Normalized Returns & 10-period Rolling Volatility
+        2. High-Low Candle Range Ratio relative to Close
+        3. Distance spread between Fast and Slow EMAs
+        4. Candle Range Expansion Ratio (Current bar vs 10-period rolling average)
+        5. Relative Volume (Current volume vs 20-period moving average)
         """
         if not ML_AVAILABLE or df is None or len(df) < 22:
             return pd.DataFrame() if ML_AVAILABLE else None
@@ -103,20 +133,29 @@ class MiniAIScanner:
         features["range_ratio"] = candle_range / df["close"]
 
         # Feature 3: Fast vs Slow EMA Distance Spread
-        ema_8 = df["close"].ewm(span=getattr(config, "EMA_FAST", 8), adjust=False).mean()
-        ema_21 = df["close"].ewm(span=getattr(config, "EMA_SLOW", 21), adjust=False).mean()
-        features["ma_spread"] = (ema_8 - ema_21) / df["close"]
+        ema_fast = df["close"].ewm(span=getattr(config, "EMA_FAST", 8), adjust=False).mean()
+        ema_slow = df["close"].ewm(span=getattr(config, "EMA_SLOW", 21), adjust=False).mean()
+        features["ma_spread"] = (ema_fast - ema_slow) / df["close"]
 
-        # Feature 4: Range Expansion Ratio (Current bar vs 10-period rolling average)
+        # Feature 4: Range Expansion Ratio
         rolling_range = candle_range.rolling(window=10).mean()
         features["expansion_ratio"] = candle_range / (rolling_range + 1e-6)
+
+        # Feature 5: Relative Volume
+        if "volume" in df.columns:
+            vol_mean = df["volume"].rolling(window=20).mean()
+            features["rel_volume"] = df["volume"] / (vol_mean + 1e-6)
+        else:
+            features["rel_volume"] = 1.0
 
         return features.dropna()
 
     def train_on_history(self, candles_or_df: Union[List[Dict[str, float]], 'pd.DataFrame']) -> bool:
         """
-        Train the AI model on recent 1-minute historical candles from MT5.
-        Target: 1 = Favorable Trend Expansion (> 5 pips move within 5 candles), 0 = Flat/Choppy Range.
+        Train the AI model on historical candles from MT5 using active profile targets:
+        - EXPANSION_M5: >= 15 pips over next 6 candles (30 mins)
+        - SCALP_M1: >= 5 pips over next 5 candles (5 mins)
+        - SILVER_BULLET_PURE: >= 12 pips over next 5 candles (15 mins)
         """
         if not ML_AVAILABLE:
             logger.warning("[AI SCANNER] Machine learning packages not available. Skipping training.")
@@ -137,15 +176,27 @@ class MiniAIScanner:
                 logger.warning("[AI SCANNER] Extracted feature matrix is empty.")
                 return False
 
-            # Define Target Expansion: 5 pips on EURUSD = 0.0005 (or equivalent on other pairs)
-            pip_target = 0.0005 if "EUR" in config.SYMBOL.upper() else 5.0
-            future_move = (df["close"].shift(-5) - df["close"]).loc[features.index]
+            profile_cfg = config.PROFILES.get(self.mode, config.CONFIG)
+            horizon = profile_cfg.get("AI_LABEL_HORIZON", 6)
+            pip_target = profile_cfg.get("AI_LABEL_PIPS", 0.0015)
+
+            # If symbol is not standard EUR/USD (e.g. JPY, Gold), scale appropriately
+            if "JPY" in config.SYMBOL.upper():
+                pip_target = pip_target * 100.0
+            elif "XAU" in config.SYMBOL.upper() or "GOLD" in config.SYMBOL.upper():
+                pip_target = pip_target * 1000.0
+
+            future_move = (df["close"].shift(-horizon) - df["close"]).loc[features.index]
             labels = (future_move.abs() >= pip_target).astype(int)
 
             # Fit Random Forest Classifier
             self.model.fit(features, labels)
             self.is_trained = True
-            logger.info(f"🤖 [AI SCANNER TRAINED] Random Forest model fitted on {len(features)} closed candles (Expansion rate: {labels.mean() * 100:.1f}%).")
+            expansion_rate = float(labels.mean() * 100)
+            logger.info(
+                f"🤖 [AI SCANNER TRAINED - {self.mode}] Fitted on {len(features)} candles | "
+                f"Horizon: {horizon} bars | Target: {pip_target:.4f} | Expansion Rate: {expansion_rate:.1f}%"
+            )
             self._save_cached_model()
             return True
 
@@ -155,13 +206,11 @@ class MiniAIScanner:
 
     def predict_regime_confidence(self, candles_or_df: Union[List[Dict[str, float]], 'pd.DataFrame']) -> float:
         """
-        Returns a Market Regime Expansion Confidence Score (0.00 to 1.00) for live closed candles.
-        If confidence >= AI_CONFIDENCE_THRESHOLD (0.70), market is in healthy expansion.
-        If confidence < 0.70, market is in choppy chop state.
+        Returns a Market Regime Expansion Confidence Score (0.00 to 1.00) for the latest closed candle [-2].
+        If confidence >= AI_CONFIDENCE_THRESHOLD, market is in high-probability expansion.
         """
         if not ML_AVAILABLE or not self.is_trained or self.model is None:
-            # Fallback: approve trade when ML is uninitialized so trading is not blocked
-            return 1.0
+            return 1.0  # Fallback to allow trade
 
         if isinstance(candles_or_df, list):
             df = self.candles_to_dataframe(candles_or_df)
@@ -172,16 +221,14 @@ class MiniAIScanner:
             return 1.0
 
         try:
-            # Evaluate the completed closed bar [-2]
             features = self.extract_features(df)
             if features.empty:
                 return 1.0
 
-            # Use latest completed feature vector
+            # Evaluate latest completed vector
             latest_vector = features.iloc[[-1]]
             probabilities = self.model.predict_proba(latest_vector)[0]
-            
-            # Probability of Class 1 (Favorable Expansion)
+
             confidence = float(probabilities[1]) if len(probabilities) > 1 else float(probabilities[0])
             return round(confidence, 3)
 

@@ -113,6 +113,7 @@ class TestAegisBTC(unittest.TestCase):
         self.assertTrue(allowed_far)
 
     def test_step_ratchet_trailing_engine(self):
+        config.set_active_mode("SCALP_M1")
         pm = PositionManager()
         pm.open_position(101, config.CONTRACT_TYPE_UP, 1.0850)
 
@@ -277,6 +278,38 @@ class TestAegisBTC(unittest.TestCase):
         # With default empty token, it should safely return False without exception
         result = telemetry.send_telegram_alert("Test notification", blocking=True)
         self.assertFalse(result)
+
+    def test_multi_profile_switching(self):
+        # Test switching to EXPANSION_M5
+        config.set_active_mode("EXPANSION_M5")
+        self.assertEqual(config.ACTIVE_MODE, "EXPANSION_M5")
+        self.assertEqual(config.MAGIC_NUMBER, 800827)
+        self.assertEqual(config.HARD_SL_PIPS, 15.0)
+        self.assertEqual(config.FIXED_TP_PIPS, 30.0)
+        self.assertEqual(config.BE_TRIGGER_PIPS, 12.0)
+        self.assertEqual(config.TIME_STOP_SECONDS, 2700)
+
+        # Test switching to SILVER_BULLET_PURE
+        config.set_active_mode("SILVER_BULLET_PURE")
+        self.assertEqual(config.ACTIVE_MODE, "SILVER_BULLET_PURE")
+        self.assertEqual(config.MAGIC_NUMBER, 800828)
+        self.assertEqual(config.HARD_SL_PIPS, 12.0)
+        self.assertEqual(config.FIXED_TP_PIPS, 24.0)
+
+        # Switch back to EXPANSION_M5
+        config.set_active_mode("EXPANSION_M5")
+
+    def test_risk_engine_safeguards(self):
+        from risk_engine import RiskEngine
+        config.set_active_mode("EXPANSION_M5")
+        risk = RiskEngine()
+
+        # Check circuit breaker
+        risk.register_position_closed(-5.00, reason="Test Max Loss")
+        self.assertTrue(risk.is_kill_switch_active)
+        allowed, reason = risk.is_execution_allowed()
+        self.assertFalse(allowed)
+        self.assertIn("Daily Kill Switch", reason)
 
 
 if __name__ == "__main__":

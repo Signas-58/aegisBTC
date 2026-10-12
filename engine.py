@@ -10,6 +10,7 @@ from typing import Dict, Any, Optional, Tuple
 import config
 
 logger = logging.getLogger("AegisBTC.Engine")
+from risk_engine import RiskEngine
 
 
 class PositionManager:
