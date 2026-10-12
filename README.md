@@ -7,7 +7,7 @@
 ![Aegis](https://img.shields.io/badge/Aegis--Weltrade-Multi--Profile%20AI-blue.svg)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)
 ![MetaTrader5](https://img.shields.io/badge/MetaTrader-5-green.svg)
-![Scikit-Learn](https://img.shields.io/badge/scikit--learn-Random%20Forest-orange.svg)
+![Scikit-Learn](https://img.shields.io/badge/scikit--learn-v1.9.1-orange.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
 **Aegis-Weltrade** is a profile-driven, AI-filtered multi-timeframe algorithmic trading engine engineered for **EURUSD** on **Weltrade MetaTrader 5 (MT5)**. 
@@ -41,14 +41,53 @@ Built using institutional software engineering standards, Aegis provides a **Pro
 1. **The "Spread Tax" is Drastically Reduced:** On 1-minute scalping with a 10-pip target, a 1.2-pip spread eats 12% of your trade before commissions. On `EXPANSION_M5` with a 30-pip target, that same 1.2-pip spread is only **4% of your trade**.
 2. **True 1:2 Risk-to-Reward Expectancy:** Risking 15 pips ($1.50) to make 30 pips ($3.00) means you stay comfortably profitable with just a **45% win rate**.
 3. **No Wick Churn:** 5-minute candles filter out random tick spikes and broker spread anomalies, giving Fair Value Gaps (FVGs) and trend momentum room to breathe.
+4. **Zero Latency Impact:** Python order execution takes 20–100ms. On 1-minute charts, 100ms lag can cause 1-pip slippage; on 5-minute charts, it is completely negligible.
+
+---
+
+## 🧠 Machine Learning Engine (`scikit-learn` Random Forest)
+
+Aegis features an active **AI Market Regime Classifier** (`ai_scanner.py`):
+
+* **Engine:** `sklearn.ensemble.RandomForestClassifier` (`n_estimators=100`, `max_depth=5`)
+* **Role:** Classifies the live market on completed closed bars into:
+  - **Expansion State ($\ge 68\%$ confidence):** Institutional displacement in progress $\rightarrow$ Trade Approved.
+  - **Chop / Consolidation State ($< 68\%$ confidence):** Sideways churn with high stop-out risk $\rightarrow$ Trade Blocked.
+* **Feature Vector:**
+  1. Normalized candle returns & 10-period rolling volatility (`std() * 1000.0`).
+  2. High-Low range ratio relative to candle close (`(high - low) / close`).
+  3. EMA distance spread (`(EMA_8 - EMA_21) / close`).
+  4. Candle range expansion ratio (current range vs. 10-period moving average).
+  5. Relative Volume (current tick volume vs. 20-period volume MA).
+* **Profile-Namespaced Model Caching:** Models are automatically cached to disk in the `models/` directory:
+  - `models/regime_rf_EXPANSION_M5.joblib`
+  - `models/regime_rf_SCALP_M1.joblib`
+  - `models/regime_rf_SILVER_BULLET_PURE.joblib`
+  This guarantees that 1-minute weights never contaminate 5-minute trading.
 
 ---
 
 ## 🧩 Modular System Architecture (7 Files)
 
+```
+aegisBTC/
+├── config.py           # Multi-profile dictionary & dynamic configuration exporter
+├── mt5_bridge.py       # MT5 IPC connection, filling solver, spread filter & order routing
+├── mt5_client.py       # Backwards-compatible wrapper subclassing MT5Bridge
+├── ai_scanner.py       # Profile-adaptive Random Forest market regime classifier
+├── strategy.py         # Bar-close [-2] confluence scoring matrix (Macro, FVG, EMA, ADX)
+├── strat.py            # Backwards-compatible strategy wrapper
+├── risk_engine.py      # Magic-filtered position lock, ratchets, blackouts & kill-switch
+├── engine.py           # Backwards-compatible execution engine wrapper
+├── telemetry.py        # Non-blocking HTTP Telegram alerts tagged by active profile
+├── main.py             # CLI parser (--mode), historical pre-training & live event loop
+├── start_live_bot.bat  # Interactive Windows desktop launcher menu
+└── models/             # Cached Random Forest weights (*.joblib)
+```
+
 1. **[`config.py`](file:///c:/Workspace/aegisBTC/config.py):** Centralized multi-profile dictionary (`PROFILES`), active mode selector (`ACTIVE_MODE`), and dynamic parameter exporter.
 2. **[`mt5_bridge.py`](file:///c:/Workspace/aegisBTC/mt5_bridge.py):** Auto-reconnecting MT5 bridge, dynamic filling mode solver (resolves 10030 errors), rolling 20-MA relative spread filter, and server-side SL modify.
-3. **[`ai_scanner.py`](file:///c:/Workspace/aegisBTC/ai_scanner.py):** Profile-adaptive `scikit-learn` Random Forest Classifier with profile-namespaced model caching (`models/regime_rf_{MODE}.joblib`).
+3. **[`ai_scanner.py`](file:///c:/Workspace/aegisBTC/ai_scanner.py):** Profile-adaptive `scikit-learn` Random Forest Classifier with profile-namespaced model caching.
 4. **[`strategy.py`](file:///c:/Workspace/aegisBTC/strategy.py):** Completed bar-close (`[-2]`) evaluation, multi-timeframe FVG imbalance detection, EMA crossovers, and 100-point confluence scoring.
 5. **[`risk_engine.py`](file:///c:/Workspace/aegisBTC/risk_engine.py):** Magic-filtered concurrency lock, delayed break-even ratchets, step-ratchet trailing, stagnation time-stops, rollover force-closes, and daily drawdown circuit breakers.
 6. **[`telemetry.py`](file:///c:/Workspace/aegisBTC/telemetry.py):** Non-blocking HTTP Telegram notifications tagging the active profile in every alert.
@@ -56,9 +95,26 @@ Built using institutional software engineering standards, Aegis provides a **Pro
 
 ---
 
+## 🛡️ Risk Controls & Circuit Breakers
+
+* **1-Trade Concurrency Lock:** Queries open positions by magic number to guarantee never more than 1 active trade per profile.
+* **Delayed Break-Even Ratchet:** At +12.0 pips float profit on M5 (+6.0 pips on M1), SL is moved to entry price ($0.00 risk).
+* **Step-Ratchet Trailing:** For every additional +6.0 pips beyond break-even, the SL is advanced forward by +6.0 pips.
+* **45-Minute Stagnation Exit:** If trade duration reaches 45 minutes and profit $\ge 0$, closes immediately to free capital.
+* **Rollover & Weekend Blackout:** Force-closes active positions at 22:30 CAT before rollover spread spikes; blocks entries 22:45–00:30 CAT and Fridays after 21:00 CAT.
+* **Daily Drawdown Kill-Switch:** Halts all trading if cumulative daily loss reaches -$4.50 on M5 (-$3.00 on M1).
+
+---
+
 ## 🚀 Quick Start Guide
 
-### 1. Configure Credentials (`.env`)
+### 1. Install Python Dependencies
+```bash
+pip install -r requirements.txt
+```
+*(Verified packages: `scikit-learn==1.9.1`, `joblib==1.6.0`, `MetaTrader5`, `pandas`, `numpy`, `requests`)*
+
+### 2. Configure Credentials (`.env`)
 Create or edit your `.env` file in the project root:
 ```env
 WELTRADE_LOGIN=YourAccountNumber
@@ -67,20 +123,20 @@ WELTRADE_SERVER=Weltrade-Live
 SYMBOL=EURUSD
 LOT_SIZE=0.01
 
-# Optional Telegram Push Notifications
+# Optional Mobile Telegram Push Notifications
 ENABLE_TELEGRAM=True
 TELEGRAM_BOT_TOKEN=123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ
 TELEGRAM_CHAT_ID=987654321
 ```
 
-### 2. Run Self-Validation Tests
+### 3. Run Self-Validation Tests
 ```bash
 python main.py --validate
 python -m unittest discover -s tests
 ```
 
-### 3. Launch the Live Trading Engine
-Run the launcher menu:
+### 4. Launch the Live Trading Engine
+Run the interactive launcher:
 ```cmd
 start_live_bot.bat
 ```
@@ -98,11 +154,15 @@ python main.py --live --mode SILVER_BULLET_PURE
 
 ---
 
-## 🛡️ Risk Controls & Circuit Breakers
+## 📱 Setting Up Free Telegram Alerts
 
-* **1-Trade Concurrency Lock:** Queries open positions by magic number to guarantee never more than 1 active trade per profile.
-* **Delayed Break-Even Ratchet:** At +12.0 pips float profit on M5 (+6.0 pips on M1), SL is moved to entry price ($0.00 risk).
-* **Step-Ratchet Trailing:** For every additional +6.0 pips beyond break-even, the SL is advanced forward by +6.0 pips.
-* **45-Minute Stagnation Exit:** If trade duration reaches 45 minutes and profit $\ge 0$, closes immediately to free capital.
-* **Rollover & Weekend Blackout:** Force-closes active positions at 22:30 CAT before rollover spread spikes; blocks entries 22:45–00:30 CAT and Fridays after 21:00 CAT.
-* **Daily Drawdown Kill-Switch:** Halts all trading if cumulative daily loss reaches -$4.50 on M5 (-$3.00 on M1).
+1. Open Telegram and search for `@BotFather`.
+2. Send `/newbot`, follow prompts, and copy your **Bot Token**.
+3. Search for `@userinfobot` on Telegram, tap Start, and copy your **Id** (`Chat ID`).
+4. Paste them into your `.env` file:
+   ```env
+   ENABLE_TELEGRAM=True
+   TELEGRAM_BOT_TOKEN=123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ
+   TELEGRAM_CHAT_ID=987654321
+   ```
+5. You will now receive instant push alerts on your phone for entries, break-even shifts, profit-locking ratchets, trade exits, and kill-switch activations!
