@@ -140,23 +140,32 @@ class MT5Bridge:
             except Exception as e:
                 logger.warning(f"Could not check/launch MT5 GUI: {e}")
 
+    def resolve_symbol_name(self, raw_symbol: str) -> str:
+        """Resolve broker-specific variant (e.g. EURUSD -> EURUSD_i) if needed."""
+        if mt5 is None:
+            return raw_symbol
+        if mt5.symbol_select(raw_symbol, True):
+            return raw_symbol
+        all_symbols = mt5.symbols_get()
+        if not all_symbols:
+            return raw_symbol
+        clean = raw_symbol.replace("/", "").replace("_", "").upper()
+        for s in all_symbols:
+            if clean in s.name.upper():
+                mt5.symbol_select(s.name, True)
+                return s.name
+        return raw_symbol
+
     def _resolve_symbol_variant(self) -> bool:
         """Attempt to find broker-specific symbol variants (e.g. EURUSD.pro, EURUSDm)."""
         if mt5 is None:
             return False
-        all_symbols = mt5.symbols_get()
-        if not all_symbols:
-            return False
-
-        clean_target = self.symbol.replace("/", "").replace("_", "").upper()
-        for s in all_symbols:
-            s_name = s.name.upper()
-            if clean_target in s_name:
-                logger.info(f"Resolved symbol variant: '{self.symbol}' -> '{s.name}'")
-                self.symbol = s.name
-                config.SYMBOL = s.name
-                mt5.symbol_select(s.name, True)
-                return True
+        resolved = self.resolve_symbol_name(self.symbol)
+        if resolved != self.symbol:
+            logger.info(f"Resolved symbol variant: '{self.symbol}' -> '{resolved}'")
+            self.symbol = resolved
+            config.SYMBOL = resolved
+            return True
         return False
 
     def resolve_filling_mode(self) -> int:
@@ -199,13 +208,14 @@ class MT5Bridge:
         }
         return mapping.get(seconds, mt5.TIMEFRAME_M5)
 
-    def fetch_candles(self, seconds: int, count: int = 100) -> List[Dict[str, float]]:
-        """Fetch historical candles for any given timeframe from MT5."""
+    def fetch_candles(self, seconds: int, count: int = 100, symbol: Optional[str] = None) -> List[Dict[str, float]]:
+        """Fetch historical candles for any given timeframe and symbol from MT5."""
         if mt5 is None or not self.is_connected:
             return []
 
+        target_sym = self.resolve_symbol_name(symbol) if symbol else self.symbol
         tf_const = self.get_timeframe_constant(seconds)
-        rates = mt5.copy_rates_from_pos(self.symbol, tf_const, 0, count)
+        rates = mt5.copy_rates_from_pos(target_sym, tf_const, 0, count)
         if rates is None or len(rates) == 0:
             return []
 
@@ -221,25 +231,27 @@ class MT5Bridge:
             })
         return candles
 
-    def fetch_profile_candles(self) -> Tuple[List[Dict[str, float]], List[Dict[str, float]], List[Dict[str, float]]]:
+    def fetch_profile_candles(self, symbol: Optional[str] = None) -> Tuple[List[Dict[str, float]], List[Dict[str, float]], List[Dict[str, float]]]:
         """
         Dynamically fetches macro, structure, and trigger candles as defined by active profile.
         Returns (macro_candles, structure_candles, trigger_candles).
         """
-        macro = self.fetch_candles(config.TF_MACRO, count=220)
-        structure = self.fetch_candles(config.TF_STRUCTURE, count=100)
-        trigger = self.fetch_candles(config.TF_TRIGGER, count=100)
+        target_sym = self.resolve_symbol_name(symbol) if symbol else self.symbol
+        macro = self.fetch_candles(config.TF_MACRO, count=220, symbol=target_sym)
+        structure = self.fetch_candles(config.TF_STRUCTURE, count=100, symbol=target_sym)
+        trigger = self.fetch_candles(config.TF_TRIGGER, count=100, symbol=target_sym)
         return macro, structure, trigger
 
-    def get_live_tick(self) -> Optional[Dict[str, float]]:
+    def get_live_tick(self, symbol: Optional[str] = None) -> Optional[Dict[str, float]]:
         """Fetch current bid, ask, and spread in pips with candle rate fallback."""
         if mt5 is None or not self.is_connected:
             return None
 
-        tick = mt5.symbol_info_tick(self.symbol)
-        sym_info = mt5.symbol_info(self.symbol)
+        target_sym = self.resolve_symbol_name(symbol) if symbol else self.symbol
+        tick = mt5.symbol_info_tick(target_sym)
+        sym_info = mt5.symbol_info(target_sym)
         point = sym_info.point if sym_info else 0.00001
-        pip_unit = 0.0001 if ("EUR" in self.symbol.upper() or "USD" in self.symbol.upper()) else point * 10
+        pip_unit = 0.0001 if ("EUR" in target_sym.upper() or "USD" in target_sym.upper() or "GBP" in target_sym.upper()) else point * 10
 
         bid = float(tick.bid) if (tick and tick.bid > 0.0) else 0.0
         ask = float(tick.ask) if (tick and tick.ask > 0.0) else 0.0
@@ -248,7 +260,7 @@ class MT5Bridge:
 
         # Fallback to latest M1 bar if live tick stream is idle
         if bid == 0.0 or ask == 0.0:
-            rates = mt5.copy_rates_from_pos(self.symbol, mt5.TIMEFRAME_M1, 0, 1)
+            rates = mt5.copy_rates_from_pos(target_sym, mt5.TIMEFRAME_M1, 0, 1)
             if rates is not None and len(rates) > 0:
                 r = rates[0]
                 bid = float(r['close'])
@@ -278,12 +290,13 @@ class MT5Bridge:
             "time": float(tick_time)
         }
 
-    def validate_spread(self) -> Tuple[bool, str, float]:
+    def validate_spread(self, symbol: Optional[str] = None) -> Tuple[bool, str, float]:
         """
         Validate live bid-ask spread against absolute MAX_ALLOWED_SPREAD_PIPS
         and relative RELATIVE_SPREAD_MULTIPLIER * 20-tick mean spread.
         """
-        tick = self.get_live_tick()
+        target_sym = self.resolve_symbol_name(symbol) if symbol else self.symbol
+        tick = self.get_live_tick(target_sym)
         if not tick:
             return False, "Failed to retrieve live tick", 999.0
 
@@ -308,7 +321,8 @@ class MT5Bridge:
         volume: Optional[float] = None,
         sl_pips: Optional[float] = None,
         tp_pips: Optional[float] = None,
-        comment: str = ""
+        comment: str = "",
+        symbol: Optional[str] = None
     ) -> Optional[int]:
         """
         Dispatch a BUY or SELL market order attaching magic number, SL, and TP.
@@ -317,19 +331,21 @@ class MT5Bridge:
             logger.error("MT5 not connected. Cannot dispatch order.")
             return None
 
+        target_sym = self.resolve_symbol_name(symbol) if symbol else self.symbol
+
         # Validate spread before firing
-        is_spread_valid, reason, current_spread = self.validate_spread()
+        is_spread_valid, reason, current_spread = self.validate_spread(target_sym)
         if not is_spread_valid:
-            logger.warning(f"🚫 [ORDER REJECTED - SPREAD FILTER] {reason}")
+            logger.warning(f"🚫 [ORDER REJECTED - SPREAD FILTER] {target_sym}: {reason}")
             return None
 
         vol = volume if volume is not None else self.lot_size
         sl_pips_val = sl_pips if sl_pips is not None else config.HARD_SL_PIPS
         tp_pips_val = tp_pips if tp_pips is not None else config.FIXED_TP_PIPS
 
-        tick = self.get_live_tick()
+        tick = self.get_live_tick(target_sym)
         if not tick:
-            logger.error("Cannot send order: no live tick.")
+            logger.error(f"Cannot send order for {target_sym}: no live tick.")
             return None
 
         is_buy = direction.upper() in ("BUY", "MULTUP")
@@ -350,7 +366,7 @@ class MT5Bridge:
 
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
-            "symbol": self.symbol,
+            "symbol": target_sym,
             "volume": vol,
             "type": order_type,
             "price": price,
@@ -364,7 +380,7 @@ class MT5Bridge:
         }
 
         logger.info(
-            f"🚀 [MT5 ORDER DISPATCH] {direction.upper()} {vol} lots {self.symbol} @ {price:.5f} | "
+            f"🚀 [MT5 ORDER DISPATCH] {direction.upper()} {vol} lots {target_sym} @ {price:.5f} | "
             f"SL: {sl_price:.5f} ({sl_pips_val:.1f}p) | TP: {tp_price:.5f} ({tp_pips_val:.1f}p) | Magic: {magic}"
         )
 
@@ -380,13 +396,19 @@ class MT5Bridge:
         logger.info(f"✅ [ORDER FILLED] Ticket #{result.order} | Price: {result.price:.5f} | Volume: {result.volume}")
         return result.order
 
-    def get_open_positions(self, magic_number: Optional[int] = None) -> List[Any]:
-        """Fetch active open positions filtered by magic number and symbol."""
+    def get_open_positions(self, magic_number: Optional[int] = None, symbol: Optional[str] = None) -> List[Any]:
+        """Fetch active open positions filtered by magic number and optionally by symbol."""
         if mt5 is None or not self.is_connected:
             return []
 
         magic = magic_number if magic_number is not None else config.MAGIC_NUMBER
-        positions = mt5.positions_get(symbol=self.symbol)
+        if symbol:
+            resolved = self.resolve_symbol_name(symbol)
+            positions = mt5.positions_get(symbol=resolved)
+        else:
+            # Query all open positions across the entire terminal
+            positions = mt5.positions_get()
+
         if positions is None:
             return []
 
@@ -398,7 +420,7 @@ class MT5Bridge:
             return False
 
         position = None
-        for p in mt5.positions_get(symbol=self.symbol) or []:
+        for p in mt5.positions_get() or []:
             if p.ticket == ticket:
                 position = p
                 break
@@ -410,7 +432,7 @@ class MT5Bridge:
         request = {
             "action": mt5.TRADE_ACTION_SLTP,
             "position": ticket,
-            "symbol": self.symbol,
+            "symbol": position.symbol,
             "sl": round(new_sl, 5),
             "tp": position.tp,
             "magic": position.magic
@@ -418,7 +440,7 @@ class MT5Bridge:
 
         res = mt5.order_send(request)
         if res and res.retcode == mt5.TRADE_RETCODE_DONE:
-            logger.info(f"🛡️ [SL MODIFIED SERVER-SIDE] Ticket #{ticket} new SL: {new_sl:.5f}")
+            logger.info(f"🛡️ [SL MODIFIED SERVER-SIDE] Ticket #{ticket} ({position.symbol}) new SL: {new_sl:.5f}")
             return True
         else:
             retcode = res.retcode if res else "None"
@@ -431,7 +453,7 @@ class MT5Bridge:
             return False
 
         position = None
-        for p in mt5.positions_get(symbol=self.symbol) or []:
+        for p in mt5.positions_get() or []:
             if p.ticket == ticket:
                 position = p
                 break
@@ -439,7 +461,7 @@ class MT5Bridge:
         if not position:
             return False
 
-        tick = self.get_live_tick()
+        tick = self.get_live_tick(position.symbol)
         if not tick:
             return False
 
@@ -450,7 +472,7 @@ class MT5Bridge:
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "position": ticket,
-            "symbol": self.symbol,
+            "symbol": position.symbol,
             "volume": position.volume,
             "type": close_type,
             "price": price,

@@ -23,3 +23,6 @@ scratch/
 venv/
 env/
 ENV/
+
+# Model Weights & Caches
+models/*.joblib

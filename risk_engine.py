@@ -36,6 +36,7 @@ class RiskEngine:
         self.current_sl_price: float = 0.0
         self.is_be_activated: bool = False
         self.last_ratchet_level_pips: float = 0.0
+        self.symbol: str = config.SYMBOL
 
         # Account & Daily Circuit Breaker
         self.daily_pnl_usd: float = 0.0
@@ -103,7 +104,8 @@ class RiskEngine:
         direction: str,
         entry_price: float,
         lot_size: float = config.LOT_SIZE,
-        initial_sl: float = 0.0
+        initial_sl: float = 0.0,
+        symbol: str = ""
     ):
         """Track newly executed position."""
         self.active_ticket = ticket
@@ -111,23 +113,27 @@ class RiskEngine:
         self.entry_price = entry_price
         self.entry_time = time.time()
         self.lot_size = lot_size
+        self.symbol = symbol or config.SYMBOL
         self.magic_number = config.MAGIC_NUMBER
         self.peak_pnl_pips = 0.0
         self.current_sl_price = initial_sl
         self.is_be_activated = False
         self.last_ratchet_level_pips = 0.0
 
+        decimals = 3 if "JPY" in self.symbol.upper() else 5
+
         logger.info(
             f"🎯 [RISK ENGINE: POSITION REGISTERED] Ticket #{ticket} | {self.direction} "
-            f"| Entry: {entry_price:.5f} | Initial SL: {initial_sl:.5f} | Profile: {config.ACTIVE_MODE}"
+            f"| Symbol: {self.symbol} | Entry: {entry_price:.{decimals}f} | Initial SL: {initial_sl:.{decimals}f} | Profile: {config.ACTIVE_MODE}"
         )
 
         send_alert(
             f"🚀 *TRADE ENTERED [{config.ACTIVE_MODE}]*\n"
             f"• Ticket: `#{ticket}`\n"
+            f"• Symbol: `{self.symbol}`\n"
             f"• Direction: *{self.direction}*\n"
-            f"• Entry: `{entry_price:.5f}`\n"
-            f"• Initial SL: `{initial_sl:.5f}` ({config.HARD_SL_PIPS:.1f}p)\n"
+            f"• Entry: `{entry_price:.{decimals}f}`\n"
+            f"• Initial SL: `{initial_sl:.{decimals}f}` ({config.HARD_SL_PIPS:.1f}p)\n"
             f"• TP Target: `{config.FIXED_TP_PIPS:.1f}p`\n"
             f"• Lots: `{lot_size}`"
         )
@@ -144,10 +150,12 @@ class RiskEngine:
         is_buy = (position.type == 0)  # mt5.ORDER_TYPE_BUY
         current_price = position.price_current
         entry_price = position.price_open
-        pip_unit = 0.0001 if ("EUR" in config.SYMBOL.upper() or "USD" in config.SYMBOL.upper()) else 0.01
+        sym = getattr(position, "symbol", getattr(self, "symbol", config.SYMBOL)).upper()
+        pip_unit = 0.01 if "JPY" in sym else 0.0001
+        decimals = 3 if "JPY" in sym else 5
 
         # Calculate floating pnl in pips
-        pnl_pips = (current_price - entry_price) / pip_unit if is_buy else (entry_price - current_price) / pip_unit
+        pnl_pips = round((current_price - entry_price) / pip_unit, 2) if is_buy else round((entry_price - current_price) / pip_unit, 2)
         runtime_seconds = time.time() - (self.entry_time if self.entry_time > 0 else position.time)
 
         if pnl_pips > self.peak_pnl_pips:
@@ -167,16 +175,17 @@ class RiskEngine:
         be_trigger = config.BE_TRIGGER_PIPS
         if not self.is_be_activated and pnl_pips >= be_trigger:
             new_sl = entry_price  # Move SL to exact open price ($0.00 risk)
-            if self.bridge and self.bridge.modify_position_sl(ticket, new_sl):
+            if self.bridge and self.bridge.modify_position_sl(ticket, new_sl, symbol=sym):
                 self.is_be_activated = True
                 self.current_sl_price = new_sl
                 self.last_ratchet_level_pips = be_trigger
-                logger.info(f"🛡️ [BREAK-EVEN ACTIVE] Ticket #{ticket} SL moved to entry {new_sl:.5f} (+{pnl_pips:.1f} pips peak)")
+                logger.info(f"🛡️ [BREAK-EVEN ACTIVE] Ticket #{ticket} ({sym}) SL moved to entry {new_sl:.{decimals}f} (+{pnl_pips:.1f} pips peak)")
                 send_alert(
                     f"🛡️ *BREAK-EVEN LOCKED [{config.ACTIVE_MODE}]*\n"
                     f"• Ticket: `#{ticket}`\n"
+                    f"• Symbol: `{sym}`\n"
                     f"• Peak Gain: `+{pnl_pips:.1f} pips`\n"
-                    f"• SL Adjusted: `{new_sl:.5f}` ($0.00 Risk)"
+                    f"• SL Adjusted: `{new_sl:.{decimals}f}` ($0.00 Risk)"
                 )
 
         # 4. Step-Ratchet Trailing Stop
@@ -188,15 +197,16 @@ class RiskEngine:
                 ratchet_sl_pips = self.last_ratchet_level_pips - step
                 new_sl = entry_price + (ratchet_sl_pips * pip_unit) if is_buy else entry_price - (ratchet_sl_pips * pip_unit)
 
-                if self.bridge and self.bridge.modify_position_sl(ticket, new_sl):
+                if self.bridge and self.bridge.modify_position_sl(ticket, new_sl, symbol=sym):
                     self.current_sl_price = new_sl
-                    logger.info(f"🪜 [STEP RATCHET] Ticket #{ticket} SL advanced to {new_sl:.5f} (Locking +{ratchet_sl_pips:.1f} pips)")
+                    logger.info(f"🪜 [STEP RATCHET] Ticket #{ticket} ({sym}) SL advanced to {new_sl:.{decimals}f} (Locking +{ratchet_sl_pips:.1f} pips)")
                     send_alert(
                         f"🪜 *STEP RATCHET ADVANCED [{config.ACTIVE_MODE}]*\n"
                         f"• Ticket: `#{ticket}`\n"
+                        f"• Symbol: `{sym}`\n"
                         f"• Float Gain: `+{pnl_pips:.1f} pips`\n"
                         f"• Guaranteed Profit: `+{ratchet_sl_pips:.1f} pips`\n"
-                        f"• New SL: `{new_sl:.5f}`"
+                        f"• New SL: `{new_sl:.{decimals}f}`"
                     )
 
         return False, ""

@@ -84,28 +84,22 @@ def detect_fvg(
     return False, 0.0
 
 
-def evaluate_confluence_proposal(
+def calculate_confluence_details(
     macro_candles: List[Dict[str, float]],
     structure_candles: List[Dict[str, float]],
-    trigger_candles: List[Dict[str, float]],
-    ai_confidence: float = 1.0
-) -> Optional[Dict[str, Any]]:
+    trigger_candles: List[Dict[str, float]]
+) -> Tuple[int, str, List[str]]:
     """
-    Evaluates 100-point confluence scoring matrix on completed bar [-2].
-    Requires Total Score >= MIN_CONFIDENCE_SCORE (80) AND AI Confidence >= AI_CONFIDENCE_THRESHOLD.
+    Evaluates 100-point confluence matrix on completed bar [-2] across BUY and SELL.
+    Returns (best_score, best_dir, reasons).
     """
-    # 0. Session Gate Filter
-    if not is_in_session_window():
-        return None
-
     if len(macro_candles) < 30 or len(structure_candles) < 20 or len(trigger_candles) < 25:
-        return None
+        return 0, "NONE", ["Insufficient candle history"]
 
     # Evaluate on completed bar [-2]
     c_macro_closed = macro_candles[-2]
     c_struct_closed = structure_candles[-2]
     c_trig_closed = trigger_candles[-2]
-    live_trig = trigger_candles[-1]
 
     # Pre-calculate indicator arrays
     macro_closes = [c['close'] for c in macro_candles]
@@ -119,6 +113,10 @@ def evaluate_confluence_proposal(
     trig_ema_fast = calculate_ema(trig_closes, config.EMA_FAST)
     trig_ema_slow = calculate_ema(trig_closes, config.EMA_SLOW)
     trig_adx = calculate_adx(trigger_candles, 14)
+
+    best_score = 0
+    best_dir = "NONE"
+    best_reasons: List[str] = []
 
     # Check candidates for both BUY and SELL
     for candidate_dir in ["BUY", "SELL"]:
@@ -190,40 +188,71 @@ def evaluate_confluence_proposal(
                 score += 5
                 reasons.append("Volume Above 20-MA")
 
-        # Cap score at 100
         score = min(100, score)
+        if score > best_score:
+            best_score = score
+            best_dir = candidate_dir
+            best_reasons = reasons
 
-        # 6. Confluence Gate Filter
-        if score >= config.MIN_CONFIDENCE_SCORE:
-            # AI Regime Gate
-            ai_thresh = getattr(config, "AI_CONFIDENCE_THRESHOLD", 0.68)
-            if ai_confidence < ai_thresh:
-                logger.info(
-                    f"⚠️ [TRADE BLOCKED BY AI] Confluence: {score}/100 {candidate_dir} | "
-                    f"AI Expansion: {ai_confidence:.2f} < Threshold {ai_thresh:.2f}"
-                )
-                continue
+    return best_score, best_dir, best_reasons
 
-            entry_price = live_trig['close']
-            pip_unit = 0.0001 if ("EUR" in config.SYMBOL.upper() or "USD" in config.SYMBOL.upper()) else 0.01
 
-            sl_pips = config.HARD_SL_PIPS
-            tp_pips = config.FIXED_TP_PIPS
+def evaluate_confluence_proposal(
+    macro_candles: List[Dict[str, float]],
+    structure_candles: List[Dict[str, float]],
+    trigger_candles: List[Dict[str, float]],
+    ai_confidence: float = 1.0,
+    symbol: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Evaluates 100-point confluence scoring matrix on completed bar [-2].
+    Requires Total Score >= MIN_CONFIDENCE_SCORE (80) AND AI Confidence >= AI_CONFIDENCE_THRESHOLD.
+    """
+    # 0. Session Gate Filter
+    if not is_in_session_window():
+        return None
 
-            sl_price = entry_price - (sl_pips * pip_unit) if is_buy else entry_price + (sl_pips * pip_unit)
-            tp_price = entry_price + (tp_pips * pip_unit) if is_buy else entry_price - (tp_pips * pip_unit)
+    score, candidate_dir, reasons = calculate_confluence_details(
+        macro_candles=macro_candles,
+        structure_candles=structure_candles,
+        trigger_candles=trigger_candles
+    )
 
-            return {
-                "action": candidate_dir,
-                "confidence_score": score,
-                "ai_confidence": ai_confidence,
-                "entry_price": entry_price,
-                "sl_price": round(sl_price, 5),
-                "tp_price": round(tp_price, 5),
-                "sl_pips": sl_pips,
-                "tp_pips": tp_pips,
-                "reasons": reasons,
-                "profile": config.ACTIVE_MODE
-            }
+    if score < config.MIN_CONFIDENCE_SCORE or candidate_dir == "NONE":
+        return None
 
-    return None
+    # AI Regime Gate
+    ai_thresh = getattr(config, "AI_CONFIDENCE_THRESHOLD", 0.68)
+    if ai_confidence < ai_thresh:
+        logger.info(
+            f"⚠️ [TRADE BLOCKED BY AI] Confluence: {score}/100 {candidate_dir} | "
+            f"AI Expansion: {ai_confidence:.2f} < Threshold {ai_thresh:.2f}"
+        )
+        return None
+
+    sym = (symbol or config.SYMBOL).upper()
+    pip_unit = 0.01 if "JPY" in sym else 0.0001
+    decimals = 3 if "JPY" in sym else 5
+    live_trig = trigger_candles[-1]
+    entry_price = live_trig['close']
+    is_buy = (candidate_dir == "BUY")
+
+    sl_pips = config.HARD_SL_PIPS
+    tp_pips = config.FIXED_TP_PIPS
+
+    sl_price = entry_price - (sl_pips * pip_unit) if is_buy else entry_price + (sl_pips * pip_unit)
+    tp_price = entry_price + (tp_pips * pip_unit) if is_buy else entry_price - (tp_pips * pip_unit)
+
+    return {
+        "action": candidate_dir,
+        "confidence_score": score,
+        "ai_confidence": ai_confidence,
+        "entry_price": entry_price,
+        "sl_price": round(sl_price, decimals),
+        "tp_price": round(tp_price, decimals),
+        "sl_pips": sl_pips,
+        "tp_pips": tp_pips,
+        "reasons": reasons,
+        "profile": config.ACTIVE_MODE,
+        "symbol": sym
+    }

@@ -16,23 +16,27 @@ Built using institutional software engineering standards, Aegis provides a **Pro
 
 ---
 
-## 🏛️ The 3 Operational Profiles at a Glance
+## 🏛️ The 4 Operational Profiles at a Glance
 
-| Parameter | Profile 1: `EXPANSION_M5` (Recommended Default) | Profile 2: `SCALP_M1` (Micro-Scalper) | Profile 3: `SILVER_BULLET_PURE` (Strict 60m Windows) |
-| :--- | :--- | :--- | :--- |
-| **Typical Hold Time** | **10 to 45 minutes** | 2 to 12 minutes | 10 to 30 minutes |
-| **Trigger Chart** | **5-Minute (`M5`)** | 1-Minute (`M1`) | 3-Minute (`M3`) |
-| **Structure Chart** | **15-Minute (`M15`)** | 3-Minute (`M3`) | 3-Minute (`M3`) |
-| **Macro Trend** | **1-Hour (`H1`)** | 15-Minute (`M15`) | 1-Hour (`H1`) |
-| **Session Windows (CAT)** | **09:00–12:30 & 14:30–18:00** | 09:00–12:00 & 15:00–18:00 | **10:00–11:00 & 16:00–17:00** |
-| **Hard Stop Loss** | **15.0 pips ($1.50)** | 10.0 pips ($1.00) | 12.0 pips ($1.20) |
-| **Take Profit Target** | **30.0 pips ($3.00 - 1:2 R:R)** | 15.0 pips ($1.50) | 24.0 pips ($2.40 - 1:2 R:R) |
-| **Break-Even Trigger** | **+12.0 pips** | +6.0 pips | +10.0 pips |
-| **Ratchet Step** | **+6.0 pips** | +4.0 pips | +5.0 pips |
-| **Stagnation Time-Stop** | **45 minutes (2700s)** | 20 minutes (1200s) | 30 minutes (1800s) |
-| **AI Lookback & Target** | **1500 M5 bars / 15 pips** | 1000 M1 bars / 5 pips | 1200 M3 bars / 12 pips |
-| **Magic Number** | **800827** | 800826 | 800828 |
-| **Max Daily Loss** | **$4.50** | $3.00 | $3.60 |
+| Parameter | Profile 1: `MULTI_ASSET_ENSEMBLE` (Default - High Frequency Target) | Profile 2: `EXPANSION_M5` (Single Pair) | Profile 3: `SCALP_M1` (Micro-Scalper) | Profile 4: `SILVER_BULLET_PURE` (Strict 60m Windows) |
+| :--- | :--- | :--- | :--- | :--- |
+| **Target Assets** | **`EURUSD`, `GBPUSD`, `USDJPY`** | `EURUSD` | `EURUSD` | `EURUSD` |
+| **Typical Target Frequency**| **~1 High-Conviction Trade/Hour** | 1 to 3 Trades/Day | 3 to 8 Trades/Day | 0 to 2 Trades/Day |
+| **Global Portfolio Lock** | **Strict 1 Position across account** | 1 Position | 1 Position | 1 Position |
+| **AI Voting Committee** | **Dual-AI (Random Forest + HistGradientBoosting)** | Random Forest | Random Forest | Random Forest |
+| **Typical Hold Time** | **10 to 35 minutes** | 10 to 45 minutes | 2 to 12 minutes | 10 to 30 minutes |
+| **Trigger Chart** | **5-Minute (`M5`) Bar-Close** | 5-Minute (`M5`) | 1-Minute (`M1`) | 3-Minute (`M3`) |
+| **Structure Chart** | **15-Minute (`M15`)** | 15-Minute (`M15`) | 3-Minute (`M3`) | 3-Minute (`M3`) |
+| **Macro Trend** | **1-Hour (`H1`)** | 1-Hour (`H1`) | 15-Minute (`M15`) | 1-Hour (`H1`) |
+| **Session Windows (CAT)** | **08:00–20:00 (Extended Institutional)** | 09:00–12:30 & 14:30–18:00 | 09:00–12:00 & 15:00–18:00 | 10:00–11:00 & 16:00–17:00 |
+| **Hard Stop Loss** | **12.0 pips ($1.20)** | 15.0 pips ($1.50) | 10.0 pips ($1.00) | 12.0 pips ($1.20) |
+| **Take Profit Target** | **24.0 pips ($2.40 - 1:2 R:R)** | 30.0 pips ($3.00 - 1:2 R:R) | 15.0 pips ($1.50) | 24.0 pips ($2.40 - 1:2 R:R) |
+| **Break-Even Trigger** | **+8.0 pips** | +12.0 pips | +6.0 pips | +10.0 pips |
+| **Ratchet Step** | **+4.0 pips** | +6.0 pips | +4.0 pips | +5.0 pips |
+| **Stagnation Time-Stop** | **35 minutes (2100s)** | 45 minutes (2700s) | 20 minutes (1200s) | 30 minutes (1800s) |
+| **AI Lookback & Target** | **1500 M5 bars / 12 pips** | 1500 M5 bars / 15 pips | 1000 M1 bars / 5 pips | 1200 M3 bars / 12 pips |
+| **Magic Number** | **800830** | 800827 | 800826 | 800828 |
+| **Max Daily Loss** | **$4.00** | $4.50 | $3.00 | $3.60 |
 
 ---
 
@@ -45,44 +49,56 @@ Built using institutional software engineering standards, Aegis provides a **Pro
 
 ---
 
-## 🧠 Machine Learning Engine (`scikit-learn` Random Forest)
+## 🧠 Machine Learning Engine: Dual-AI Committee Consensus
 
-Aegis features an active **AI Market Regime Classifier** (`ai_scanner.py`):
+Aegis uses a **Dual-AI Voting Committee** (`ai_ensemble.py`) built directly on `scikit-learn` without heavy C++ dependencies:
 
-* **Engine:** `sklearn.ensemble.RandomForestClassifier` (`n_estimators=100`, `max_depth=5`)
-* **Role:** Classifies the live market on completed closed bars into:
-  - **Expansion State ($\ge 68\%$ confidence):** Institutional displacement in progress $\rightarrow$ Trade Approved.
-  - **Chop / Consolidation State ($< 68\%$ confidence):** Sideways churn with high stop-out risk $\rightarrow$ Trade Blocked.
+1. **Random Forest Classifier (`RandomForestClassifier`):** Focuses on bagging trees to filter out consolidation noise, sideways churn, and spread traps.
+2. **HistGradientBoosting Classifier (`HistGradientBoostingClassifier`):** Uses binned gradient boosting to identify directional displacement, volume surges, and volatility expansions.
+
+* **Consensus Gate Rule:** Both models must vote in agreement ($\ge 65\%$ confidence) before an entry order is authorized.
+* **Per-Symbol & Profile Weight Caching:** Models are automatically cached per symbol and profile in `models/`:
+  - `models/ensemble_EURUSD_MULTI_ASSET_ENSEMBLE.joblib`
+  - `models/ensemble_GBPUSD_MULTI_ASSET_ENSEMBLE.joblib`
+  - `models/ensemble_USDJPY_MULTI_ASSET_ENSEMBLE.joblib`
 * **Feature Vector:**
   1. Normalized candle returns & 10-period rolling volatility (`std() * 1000.0`).
   2. High-Low range ratio relative to candle close (`(high - low) / close`).
   3. EMA distance spread (`(EMA_8 - EMA_21) / close`).
   4. Candle range expansion ratio (current range vs. 10-period moving average).
   5. Relative Volume (current tick volume vs. 20-period volume MA).
-* **Profile-Namespaced Model Caching:** Models are automatically cached to disk in the `models/` directory:
-  - `models/regime_rf_EXPANSION_M5.joblib`
-  - `models/regime_rf_SCALP_M1.joblib`
-  - `models/regime_rf_SILVER_BULLET_PURE.joblib`
-  This guarantees that 1-minute weights never contaminate 5-minute trading.
 
 ---
 
-## 🧩 Modular System Architecture (7 Files)
+## ⏱️ Live Diagnostic Heartbeat & Telemetry
+
+To solve the classic algorithmic trading issue where **"a silent script looks identical to a crashed script"**, Aegis logs an instant diagnostic heartbeat on every closed candle across all active assets:
+
+```text
+⏱️ [09:05:01] MULTI_ASSET_ENSEMBLE | EURUSD | Score: 25/100 | AI Conf: 34.2% | Spread: 0.6p | Status: ⏳ Score Low (25/100) | AI Low (34.2%)
+⏱️ [09:05:02] MULTI_ASSET_ENSEMBLE | GBPUSD | Score: 50/100 | AI Conf: 58.1% | Spread: 0.7p | Status: ⏳ Score Low (50/100) | AI Low (58.1%)
+⏱️ [09:05:03] MULTI_ASSET_ENSEMBLE | USDJPY | Score: 100/100 | AI Conf: 81.0% | Spread: 0.8p | Status: ⚡ EXECUTING BUY ORDER #800830
+```
+
+* **Instant Startup Telegram Alert:** Dispatches an instant Telegram status ping on startup confirming profile, magic number, targets, and active symbols.
+* **Strict Global Portfolio Lock:** Enforces `MAX_PORTFOLIO_POSITIONS = 1` globally across the entire account to safeguard small balance accounts ($50–$100).
+
+---
+
+## 🧩 Modular System Architecture
 
 ```
 aegisBTC/
 ├── config.py           # Multi-profile dictionary & dynamic configuration exporter
-├── mt5_bridge.py       # MT5 IPC connection, filling solver, spread filter & order routing
-├── mt5_client.py       # Backwards-compatible wrapper subclassing MT5Bridge
-├── ai_scanner.py       # Profile-adaptive Random Forest market regime classifier
-├── strategy.py         # Bar-close [-2] confluence scoring matrix (Macro, FVG, EMA, ADX)
-├── strat.py            # Backwards-compatible strategy wrapper
-├── risk_engine.py      # Magic-filtered position lock, ratchets, blackouts & kill-switch
-├── engine.py           # Backwards-compatible execution engine wrapper
+├── ai_ensemble.py      # Dual-AI Committee (RandomForest + HistGradientBoosting)
+├── ai_scanner.py       # Backward-compatible AI scanner wrapper
+├── mt5_bridge.py       # Multi-symbol MT5 bridge, filling solver, spread filter & order routing
+├── strategy.py         # Completed bar [-2] confluence scoring (Macro, FVG, EMA, ADX)
+├── risk_engine.py      # Concurrency lock, pips math (EUR/USD/JPY), ratchets & kill-switch
 ├── telemetry.py        # Non-blocking HTTP Telegram alerts tagged by active profile
-├── main.py             # CLI parser (--mode), historical pre-training & live event loop
-├── start_live_bot.bat  # Interactive Windows desktop launcher menu
-└── models/             # Cached Random Forest weights (*.joblib)
+├── main.py             # CLI parser (--mode), sequential multi-asset scanner & heartbeat
+├── start_live_bot.bat  # Interactive Windows desktop launcher menu (options 1 to 4)
+└── models/             # Cached Dual-AI weights (*.joblib)
 ```
 
 1. **[`config.py`](file:///c:/Workspace/aegisBTC/config.py):** Centralized multi-profile dictionary (`PROFILES`), active mode selector (`ACTIVE_MODE`), and dynamic parameter exporter.

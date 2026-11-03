@@ -30,11 +30,12 @@ CONTRACT_TYPE_DOWN = "SELL"
 
 # ------------------------------------------------------------------------------
 # MASTER PROFILE SELECTOR
-# Options: "SCALP_M1" | "EXPANSION_M5" (Default) | "SILVER_BULLET_PURE"
+# Options: "MULTI_ASSET_ENSEMBLE" (Default) | "EXPANSION_M5" | "SCALP_M1" | "SILVER_BULLET_PURE"
 # ------------------------------------------------------------------------------
-ACTIVE_MODE = os.getenv("ACTIVE_MODE", "EXPANSION_M5").upper()
-if ACTIVE_MODE not in ("SCALP_M1", "EXPANSION_M5", "SILVER_BULLET_PURE"):
-    ACTIVE_MODE = "EXPANSION_M5"
+ACTIVE_MODE = os.getenv("ACTIVE_MODE", "MULTI_ASSET_ENSEMBLE").upper()
+VALID_PROFILES = ("MULTI_ASSET_ENSEMBLE", "EXPANSION_M5", "SCALP_M1", "SILVER_BULLET_PURE")
+if ACTIVE_MODE not in VALID_PROFILES:
+    ACTIVE_MODE = "MULTI_ASSET_ENSEMBLE"
 
 # System Spread & Blackout Settings
 MAX_ALLOWED_SPREAD_PIPS = float(os.getenv("MAX_ALLOWED_SPREAD_PIPS", "1.5"))
@@ -66,36 +67,40 @@ ENABLE_TELEGRAM = bool(os.getenv("ENABLE_TELEGRAM", "False").lower() in ("true",
 # ------------------------------------------------------------------------------
 PROFILES = {
     # --------------------------------------------------------------------------
-    # PROFILE 1: 1-MINUTE MICRO-SCALPER (High Frequency / Tight Risk)
+    # PROFILE 1: MULTI-ASSET DUAL-AI ENSEMBLE (~1 TRADE/HOUR TARGET) [RECOMMENDED]
     # --------------------------------------------------------------------------
-    "SCALP_M1": {
-        "MAGIC_NUMBER": 800826,
-        "TF_MACRO": 900,         # 15-Min Macro Trend
-        "TF_STRUCTURE": 180,     # 3-Min Structure & FVG Imbalance
-        "TF_TRIGGER": 60,        # 1-Min Bar-Close Precision Trigger
+    "MULTI_ASSET_ENSEMBLE": {
+        "MAGIC_NUMBER": 800830,
+        "SYMBOLS": ["EURUSD", "GBPUSD", "USDJPY"],
+        "MAX_PORTFOLIO_POSITIONS": 1,  # Strict global 1-trade limit across account
+        "TF_MACRO": 3600,             # 1-Hour Trend
+        "TF_STRUCTURE": 900,          # 15-Min Structure & FVG Imbalance
+        "TF_TRIGGER": 300,            # 5-Min Bar-Close Precision Trigger
         "SILVER_BULLET_WINDOWS_CAT": [
-            ("09:00", "12:00"),  # London Session Open Window
-            ("15:00", "18:00"),  # NY Session Open Window
+            ("08:00", "20:00")        # Extended active institutional session scan
         ],
-        "HARD_SL_PIPS": 10.0,
-        "FIXED_TP_PIPS": 15.0,
-        "BE_TRIGGER_PIPS": 6.0,
+        "HARD_SL_PIPS": 12.0,
+        "FIXED_TP_PIPS": 24.0,        # 1:2 Risk/Reward Ratio
+        "BE_TRIGGER_PIPS": 8.0,
         "TRAILING_STEP_PIPS": 4.0,
-        "TIME_STOP_SECONDS": 1200,      # 20-Minute Stagnation Exit
-        "COOLDOWN_SECONDS": 60,         # 1-Minute Cooldown
-        "COOLDOWN_AFTER_LOSS_SECONDS": 600, # 10-Minute Loss Quarantine
-        "AI_LOOKBACK_CANDLES": 1000,
-        "AI_LABEL_HORIZON": 5,          # 5 candles forward (5 mins)
-        "AI_LABEL_PIPS": 0.0005,        # 5.0 pips minimum expansion
-        "AI_CONFIDENCE_THRESHOLD": 0.70,
-        "MAX_DAILY_LOSS_USD": 3.00,
+        "TIME_STOP_SECONDS": 2100,    # 35-Minute Stagnation Exit
+        "COOLDOWN_SECONDS": 180,      # 3-Minute Cooldown
+        "COOLDOWN_AFTER_LOSS_SECONDS": 600,
+        "AI_LOOKBACK_CANDLES": 1500,
+        "AI_LABEL_HORIZON": 6,        # 6 candles forward (30 mins)
+        "AI_LABEL_PIPS": 0.0012,      # 12.0 pips minimum expansion
+        "AI_CONFIDENCE_THRESHOLD": 0.65,
+        "AI_VOTES_REQUIRED": 2,       # Both RF & HistGradientBoosting must agree
+        "MAX_DAILY_LOSS_USD": 4.00,
     },
 
     # --------------------------------------------------------------------------
-    # PROFILE 2: 5-MINUTE INTRADAY MOMENTUM EXPANSION (RECOMMENDED DEFAULT)
+    # PROFILE 2: 5-MINUTE INTRADAY MOMENTUM EXPANSION (SINGLE-PAIR DEFAULT)
     # --------------------------------------------------------------------------
     "EXPANSION_M5": {
         "MAGIC_NUMBER": 800827,
+        "SYMBOLS": ["EURUSD"],
+        "MAX_PORTFOLIO_POSITIONS": 1,
         "TF_MACRO": 3600,        # 1-Hour Macro Trend (EMA-200)
         "TF_STRUCTURE": 900,     # 15-Min Structure & FVG Imbalance
         "TF_TRIGGER": 300,       # 5-Min Bar-Close Precision Trigger
@@ -114,14 +119,46 @@ PROFILES = {
         "AI_LABEL_HORIZON": 6,          # 6 candles forward (30 mins)
         "AI_LABEL_PIPS": 0.0015,        # 15.0 pips minimum expansion
         "AI_CONFIDENCE_THRESHOLD": 0.68,
+        "AI_VOTES_REQUIRED": 2,
         "MAX_DAILY_LOSS_USD": 4.50,
     },
 
     # --------------------------------------------------------------------------
-    # PROFILE 3: STRICT PURE ICT SILVER BULLET (EXACT 60-MINUTE WINDOWS)
+    # PROFILE 3: 1-MINUTE MICRO-SCALPER (High Frequency / Tight Risk)
+    # --------------------------------------------------------------------------
+    "SCALP_M1": {
+        "MAGIC_NUMBER": 800826,
+        "SYMBOLS": ["EURUSD"],
+        "MAX_PORTFOLIO_POSITIONS": 1,
+        "TF_MACRO": 900,         # 15-Min Macro Trend
+        "TF_STRUCTURE": 180,     # 3-Min Structure & FVG Imbalance
+        "TF_TRIGGER": 60,        # 1-Min Bar-Close Precision Trigger
+        "SILVER_BULLET_WINDOWS_CAT": [
+            ("09:00", "12:00"),  # London Session Open Window
+            ("15:00", "18:00"),  # NY Session Open Window
+        ],
+        "HARD_SL_PIPS": 10.0,
+        "FIXED_TP_PIPS": 15.0,
+        "BE_TRIGGER_PIPS": 6.0,
+        "TRAILING_STEP_PIPS": 4.0,
+        "TIME_STOP_SECONDS": 1200,      # 20-Minute Stagnation Exit
+        "COOLDOWN_SECONDS": 60,         # 1-Minute Cooldown
+        "COOLDOWN_AFTER_LOSS_SECONDS": 600, # 10-Minute Loss Quarantine
+        "AI_LOOKBACK_CANDLES": 1000,
+        "AI_LABEL_HORIZON": 5,          # 5 candles forward (5 mins)
+        "AI_LABEL_PIPS": 0.0005,        # 5.0 pips minimum expansion
+        "AI_CONFIDENCE_THRESHOLD": 0.70,
+        "AI_VOTES_REQUIRED": 2,
+        "MAX_DAILY_LOSS_USD": 3.00,
+    },
+
+    # --------------------------------------------------------------------------
+    # PROFILE 4: STRICT PURE ICT SILVER BULLET (EXACT 60-MINUTE WINDOWS)
     # --------------------------------------------------------------------------
     "SILVER_BULLET_PURE": {
         "MAGIC_NUMBER": 800828,
+        "SYMBOLS": ["EURUSD"],
+        "MAX_PORTFOLIO_POSITIONS": 1,
         "TF_MACRO": 3600,        # 1-Hour Trend & Liquidity Sweeps
         "TF_STRUCTURE": 180,     # 3-Min Structure & FVG Displacement
         "TF_TRIGGER": 180,       # 3-Min Bar-Close Execution Trigger
@@ -140,20 +177,21 @@ PROFILES = {
         "AI_LABEL_HORIZON": 5,          # 5 candles forward (15 mins)
         "AI_LABEL_PIPS": 0.0012,        # 12.0 pips minimum expansion
         "AI_CONFIDENCE_THRESHOLD": 0.72,
+        "AI_VOTES_REQUIRED": 2,
         "MAX_DAILY_LOSS_USD": 3.60,
     },
 }
 
 def set_active_mode(mode: str):
     """Dynamically switch active mode and export parameters."""
-    global ACTIVE_MODE, CONFIG
+    global ACTIVE_MODE, CONFIG, SYMBOLS
     global MAGIC_NUMBER, TF_MACRO, TF_STRUCTURE, TF_TRIGGER, TF_ENTRY
     global SILVER_BULLET_WINDOWS_CAT, HARD_SL_PIPS, FIXED_TP_PIPS, TP_PIPS
     global BE_TRIGGER_PIPS, TRAILING_STEP_PIPS, TIME_STOP_SECONDS, COOLDOWN_SECONDS
     global COOLDOWN_AFTER_WIN_SECONDS, COOLDOWN_AFTER_LOSS_SECONDS
     global AI_LOOKBACK_CANDLES, AI_LABEL_HORIZON, AI_LABEL_PIPS, AI_CONFIDENCE_THRESHOLD
     global MAX_DAILY_LOSS_USD, HARD_STOP_LOSS_USD, BREAK_EVEN_TRIGGER, TRAILING_STEP_USD
-    global TRAILING_GAP_USD, TAKE_PROFIT_LOT_MULT
+    global TRAILING_GAP_USD, TAKE_PROFIT_LOT_MULT, MAX_PORTFOLIO_POSITIONS
 
     mode_upper = mode.upper()
     if mode_upper in PROFILES:
@@ -162,6 +200,8 @@ def set_active_mode(mode: str):
 
     # Export dynamic profile variables
     MAGIC_NUMBER = CONFIG["MAGIC_NUMBER"]
+    SYMBOLS = CONFIG.get("SYMBOLS", [SYMBOL])
+    MAX_PORTFOLIO_POSITIONS = CONFIG.get("MAX_PORTFOLIO_POSITIONS", 1)
     TF_MACRO = CONFIG["TF_MACRO"]
     TF_STRUCTURE = CONFIG["TF_STRUCTURE"]
     TF_TRIGGER = CONFIG["TF_TRIGGER"]
